@@ -66,6 +66,7 @@ const API = {
   getHistory:    (limit = 20)  => apiFetch(`/api/execution/history?limit=${limit}`),
   getExecution:  (id)          => apiFetch(`/api/execution/${id}`),
   triggerETL:    ()            => apiFetch('/api/execution/trigger', { method: 'POST' }),
+  triggerTrazalo:()            => apiFetch('/api/execution/trigger-trazalo', { method: 'POST' }),
 
   // ── Usuarios
   users:         '/api/users/',

@@ -1017,6 +1017,31 @@ document.getElementById('btn-run-etl')?.addEventListener('click', async () => {
   }
 });
 
+// ── Sincronizacion manual con Trazalo (solo admin) ──
+document.getElementById('btn-sync-trazalo')?.addEventListener('click', async () => {
+  if (!confirm('¿Sincronizar novedades desde Trazalo ahora?')) return;
+  const btn = document.getElementById('btn-sync-trazalo');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Sincronizando...';
+  try {
+    const r = await API.triggerTrazalo();
+    if (r && r.status === 'ok') {
+      showToast(`Trazalo sincronizado: ${r.periodos_sincronizados} periodos, ${r.registros_insertados} registros.`, 'success');
+      setTimeout(() => loadPanel(activePanel), 1500);
+    } else if (r && r.status === 'skipped') {
+      showToast('Sincronizacion omitida: Trazalo no esta configurado (TRAZALO_DB_HOST).', 'warning');
+    } else {
+      showToast('Error en la sincronizacion: ' + ((r && r.error) || 'desconocido'), 'danger');
+    }
+  } catch (e) {
+    showToast('Error al sincronizar Trazalo: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+});
+
 document.getElementById('btn-logout')?.addEventListener('click', logout);
 
 // ── Tabla de Ausentismo Empleados ────────────────────────────────
