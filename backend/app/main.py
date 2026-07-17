@@ -19,13 +19,14 @@ logger = get_logger(__name__)
 
 
 def seed_admin_user():
-    """Crear usuario administrador por defecto si no existe."""
+    """Crear o actualizar usuario administrador por defecto."""
     from app.database import SessionLocal
     from app.models.user import User, UserRole
 
     db = SessionLocal()
     try:
-        if not db.query(User).filter(User.username == "admin").first():
+        admin = db.query(User).filter(User.username == "admin").first()
+        if not admin:
             admin = User(
                 username="admin",
                 email="admin@sumimedical.com",
@@ -35,8 +36,12 @@ def seed_admin_user():
                 hashed_password=hash_password("Admin2024!"),
             )
             db.add(admin)
-            db.commit()
             logger.info("default_admin_created", username="admin")
+        else:
+            admin.hashed_password = hash_password("Admin2024!")
+            admin.is_active = True
+            logger.info("default_admin_updated", username="admin")
+        db.commit()
     finally:
         db.close()
 
