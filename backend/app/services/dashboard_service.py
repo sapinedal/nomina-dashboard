@@ -1244,13 +1244,15 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
 
     # OJO: el alias no puede llamarse 'periodo' porque colisiona con la columna real
     # y SQLite agruparía por la columna en vez de por el mes del archivo.
+    is_sqlite = db.bind.dialect.name == "sqlite"
+    glob_cond = "n.archivo_origen GLOB '[0-9][0-9][0-9][0-9][0-9][0-9].xlsx'" if is_sqlite else "n.archivo_origen ~ '^[0-9]{6}\\.xlsx$'"
     sql_tendencia = text(f"""
         SELECT
             SUBSTR(n.archivo_origen, 3, 4) || '-' || SUBSTR(n.archivo_origen, 1, 2) AS mes_arch,
             SUM(CAST(n.dias AS REAL)) AS horas
         FROM novedades_nomina n
         WHERE n.es_valido = 1 AND n.unidad = 'horas'
-          AND n.archivo_origen GLOB '[0-9][0-9][0-9][0-9][0-9][0-9].xlsx'
+          AND {glob_cond}
           {tend_area_where} {tend_sede_where}
         GROUP BY SUBSTR(n.archivo_origen, 3, 4) || '-' || SUBSTR(n.archivo_origen, 1, 2)
         ORDER BY SUBSTR(n.archivo_origen, 3, 4) || '-' || SUBSTR(n.archivo_origen, 1, 2)
@@ -1463,11 +1465,13 @@ def get_filter_options(db: Session, panel: Optional[str] = None, periodo: Option
         .all()
     )
     max_per = _max_periodo_archivos(db) or '9999-99'
-    periodos = db.execute(text("""
+    is_sqlite = db.bind.dialect.name == "sqlite"
+    glob_cond = "periodo GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'" if is_sqlite else "periodo ~ '^[0-9]{4}-[0-9]{2}$'"
+    periodos = db.execute(text(f"""
         SELECT DISTINCT periodo FROM novedades_nomina
         WHERE es_valido = 1
           AND periodo IS NOT NULL
-          AND periodo GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'
+          AND {glob_cond}
           AND CAST(SUBSTR(periodo, 1, 4) AS INTEGER) >= 2000
           AND periodo <= :max_per
         ORDER BY periodo DESC
@@ -1512,6 +1516,9 @@ def get_resumen_por_area(db: Session, filters: dict) -> list[dict]:
     max_per = max_per_arch or '9999-99'
     params['max_per'] = max_per
 
+    is_sqlite = db.bind.dialect.name == "sqlite"
+    glob_cond = "n.periodo GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'" if is_sqlite else "n.periodo ~ '^[0-9]{4}-[0-9]{2}$'"
+
     sql = text(f"""
         SELECT
             COALESCE(n.area, '(Sin área)') AS area,
@@ -1536,7 +1543,7 @@ def get_resumen_por_area(db: Session, filters: dict) -> list[dict]:
                 ) THEN n.cedula END)        AS inactivos,
             COUNT(CASE WHEN n.tipo_novedad != 'PRESENTE EN NOMINA' THEN 1 END) AS total_novedades,
             MAX(CASE
-                WHEN n.periodo GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'
+                WHEN {glob_cond}
                  AND n.periodo <= :max_per
                 THEN n.periodo END)         AS ultimo_periodo
         FROM novedades_nomina n
@@ -1606,6 +1613,9 @@ def get_empleados_lista(db: Session, filters: dict, estado_filter: str = "todos"
         )"""
         params["tipo_like"] = f"%{filters['tipo_novedad'].lower()}%"
 
+    is_sqlite = db.bind.dialect.name == "sqlite"
+    glob_cond = "n.periodo GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'" if is_sqlite else "n.periodo ~ '^[0-9]{4}-[0-9]{2}$'"
+
     sql = text(f"""
         SELECT
             n.cedula,
@@ -1625,7 +1635,7 @@ def get_empleados_lista(db: Session, filters: dict, estado_filter: str = "todos"
                AND n2.archivo_origen = :arch
              ORDER BY n2.id DESC LIMIT 1) AS cargo,
             MAX(CASE
-                WHEN n.periodo GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'
+                WHEN {glob_cond}
                  AND n.periodo <= :max_per
                 THEN n.periodo END) AS ultimo_periodo,
             (
