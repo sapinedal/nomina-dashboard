@@ -1,0 +1,21 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  characterization-tests:
+    name: Tests de caracterizacion (hermeticos)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Los tests de caracterizacion de normalizers solo dependen de la stdlib
+      # (modulo `re`), asi que no se instala nada: rapido y deterministico.
+      - name: Ejecutar tests de caracterizacion
+        working-directory: backend
+        run: python -m unittest discover -s tests -p "test_*.py" -v
