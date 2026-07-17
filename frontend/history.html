@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NóminaBoard — Historial ETL</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<header class="app-header">
+  <div class="header-brand">
+    <span class="brand-icon">📊</span>
+    <div>
+      <h1>NóminaBoard</h1>
+      <p>Dashboard RR.HH. — Consolidado de Novedades de Nómina</p>
+    </div>
+  </div>
+
+  <nav class="header-nav">
+    <a href="dashboard.html"><i class="bi bi-speedometer2"></i> Tablero</a>
+    <a href="history.html" class="active"><i class="bi bi-clock-history"></i> Historial</a>
+    <a href="admin.html" id="nav-admin" style="display:none"><i class="bi bi-people"></i> Usuarios</a>
+  </nav>
+
+  <div class="header-actions">
+    <div class="user-chip">
+      <i class="bi bi-person-circle"></i>
+      <span id="user-name">—</span>
+      <span id="user-role" class="role-badge role-readonly">Consulta</span>
+    </div>
+    <button class="btn-icon" id="btn-refresh" title="Actualizar"><i class="bi bi-arrow-clockwise"></i></button>
+    <button class="btn-icon" id="btn-logout" title="Cerrar sesión"><i class="bi bi-box-arrow-right"></i></button>
+  </div>
+</header>
+
+<!-- ── Barra de filtros (simple) ───────────────────────────── -->
+<div class="filter-bar">
+  <span class="filter-label">Historial de Cargas</span>
+  <div class="filter-spacer"></div>
+  <button class="btn-action btn-etl" id="btn-run-etl" style="display:none">
+    <i class="bi bi-arrow-repeat"></i> Ejecutar carga ahora
+  </button>
+</div>
+
+<!-- ── Contenido ────────────────────────────────────────────── -->
+<div class="page-content">
+
+  <!-- KPIs del historial -->
+  <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
+    <div class="kpi-card">
+      <div class="kpi-label">Total ejecuciones</div>
+      <div class="kpi-value" id="kpi-exec-total">—</div>
+      <div class="kpi-sub">desde el inicio</div>
+      <div class="kpi-icon">🔄</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">Exitosas</div>
+      <div class="kpi-value" id="kpi-exec-ok">—</div>
+      <div class="kpi-sub">completadas sin errores</div>
+      <div class="kpi-icon">✅</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="kpi-label">Con errores</div>
+      <div class="kpi-value" id="kpi-exec-err">—</div>
+      <div class="kpi-sub">cargas fallidas</div>
+      <div class="kpi-icon">❌</div>
+    </div>
+    <div class="kpi-card purple">
+      <div class="kpi-label">Registros procesados</div>
+      <div class="kpi-value" id="kpi-exec-rows">—</div>
+      <div class="kpi-sub">total histórico</div>
+      <div class="kpi-icon">📦</div>
+    </div>
+  </div>
+
+  <!-- Tabla historial -->
+  <div class="chart-card" style="padding:0">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 14px;border-bottom:1px solid var(--border)">
+      <div>
+        <div class="chart-title">Historial de Ejecuciones ETL</div>
+        <div class="chart-sub" style="margin-bottom:0">Registro de todas las cargas de datos desde el directorio de red</div>
+      </div>
+    </div>
+
+    <div class="data-table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Inicio</th>
+            <th>Fin</th>
+            <th>Duración</th>
+            <th>Estado</th>
+            <th style="text-align:right">Archivos</th>
+            <th style="text-align:right">Hojas</th>
+            <th style="text-align:right">Registros</th>
+            <th style="text-align:right">Errores</th>
+            <th>Tipo</th>
+            <th>Mensaje</th>
+          </tr>
+        </thead>
+        <tbody id="table-body">
+          <tr>
+            <td colspan="11" style="text-align:center;padding:60px;color:var(--muted)">
+              <span class="spinner"></span>&nbsp; Cargando historial...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination-bar">
+      <span id="page-info">—</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn-sm" id="btn-prev" disabled><i class="bi bi-chevron-left"></i> Anterior</button>
+        <button class="btn-sm" id="btn-next" disabled>Siguiente <i class="bi bi-chevron-right"></i></button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /page-content -->
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="js/api.js"></script>
+<script>
+(async () => {
+  requireAuth();
+
+  const user = getCurrentUser();
+  document.getElementById('user-name').textContent = user?.username || '—';
+  const roleBadge = document.getElementById('user-role');
+  const roleMap = { admin: ['Admin', 'role-admin'], analyst: ['Analista', 'role-analyst'], readonly: ['Consulta', 'role-readonly'] };
+  const [label, cls] = roleMap[user?.role] || ['Consulta', 'role-readonly'];
+  roleBadge.textContent = label;
+  roleBadge.className = 'role-badge ' + cls;
+
+  if (['admin', 'analyst'].includes(user?.role)) {
+    document.getElementById('btn-run-etl').style.display = 'flex';
+  }
+  if (user?.role === 'admin') {
+    document.getElementById('nav-admin').style.display = 'flex';
+  }
+
+  document.getElementById('btn-logout').addEventListener('click', logout);
+  document.getElementById('btn-refresh').addEventListener('click', () => loadHistory(state.page));
+
+  document.getElementById('btn-run-etl').addEventListener('click', async () => {
+    if (!confirm('¿Ejecutar carga ETL manual ahora?')) return;
+    try {
+      await apiFetch(API.etlTrigger, { method: 'POST' });
+      showToast('Carga ETL iniciada', 'success');
+      setTimeout(() => loadHistory(1), 2500);
+    } catch (e) { showToast(e.message, 'danger'); }
+  });
+
+  document.getElementById('btn-prev').addEventListener('click', () => loadHistory(state.page - 1));
+  document.getElementById('btn-next').addEventListener('click', () => loadHistory(state.page + 1));
+
+  const state = { page: 1, pageSize: 20 };
+
+  async function loadHistory(page = 1) {
+    state.page = page;
+    try {
+      const data = await apiFetch(`${API.executions}?page=${page}&page_size=${state.pageSize}`);
+      const items = data.items || [];
+
+      document.getElementById('kpi-exec-total').textContent = formatNumber(data.total);
+      document.getElementById('kpi-exec-ok').textContent   = formatNumber(items.filter(i => i.status === 'completed').length);
+      document.getElementById('kpi-exec-err').textContent  = formatNumber(items.filter(i => i.status === 'error').length);
+      document.getElementById('kpi-exec-rows').textContent = formatNumber(items.reduce((s, i) => s + (i.records_processed || 0), 0));
+
+      const tbody = document.getElementById('table-body');
+      if (!items.length) {
+        tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:60px;color:var(--muted)">
+          <div class="empty-icon">📭</div>No hay ejecuciones registradas.</td></tr>`;
+        return;
+      }
+
+      const statusLabel = {
+        completed: ['Completado', 'badge-ok'], error: ['Error', 'badge-error'],
+        running:   ['En curso',   'badge-running'], partial: ['Parcial', 'badge-partial'],
+        skipped:   ['Omitido',    'badge-skipped']
+      };
+
+      tbody.innerHTML = items.map((row, idx) => {
+        const [sl, sc] = statusLabel[row.status] || [row.status, 'badge-info'];
+        const dur    = row.duration_seconds != null ? `${Math.round(row.duration_seconds)}s` : '—';
+        const inicio = row.started_at  ? formatDate(row.started_at)  : '—';
+        const fin    = row.finished_at ? formatDate(row.finished_at) : '—';
+        return `<tr>
+          <td style="color:var(--muted);font-size:.75rem">${(page-1)*state.pageSize + idx + 1}</td>
+          <td><span style="font-family:monospace;font-size:.78rem">${inicio}</span></td>
+          <td><span style="font-family:monospace;font-size:.78rem">${fin}</span></td>
+          <td style="font-size:.78rem">${dur}</td>
+          <td><span class="badge ${sc}">${sl}</span></td>
+          <td style="text-align:right">${formatNumber(row.files_processed ?? 0)}</td>
+          <td style="text-align:right">${formatNumber(row.sheets_processed ?? 0)}</td>
+          <td style="text-align:right">${formatNumber(row.records_processed ?? 0)}</td>
+          <td style="text-align:right">${row.errors_count ? `<span style="color:var(--danger)">${formatNumber(row.errors_count)}</span>` : '0'}</td>
+          <td><span class="badge badge-info">${row.trigger_type || 'manual'}</span></td>
+          <td style="font-size:.76rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+              title="${row.error_message || ''}">${row.error_message || '—'}</td>
+        </tr>`;
+      }).join('');
+
+      const totalPages = Math.ceil(data.total / state.pageSize);
+      document.getElementById('page-info').textContent =
+        `Página ${page} de ${totalPages} · ${formatNumber(data.total)} ejecuciones`;
+      document.getElementById('btn-prev').disabled = page <= 1;
+      document.getElementById('btn-next').disabled = page >= totalPages;
+
+    } catch (e) {
+      showToast('Error cargando historial: ' + e.message, 'danger');
+    }
+  }
+
+  loadHistory();
+})();
+</script>
+</body>
+</html>

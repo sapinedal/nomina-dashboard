@@ -1,0 +1,40 @@
+# Entornos virtuales
+.venv/
+venv/
+ENV/
+env/
+
+# Python cache / compilados
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Archivos de configuración local (CONTIENEN CLAVES/SECRETOS)
+.env
+.env.local
+.env.development
+.env.production
+backend/.env
+backend/.env.local
+backend/app/.env
+
+# Logs y procesos
+logs/
+*.log
+server.pid
+
+# IDEs y Editores
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Archivos temporales de Office/Excel
+~$*
+.DS_Store
+Thumbs.db

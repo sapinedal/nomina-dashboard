@@ -1,0 +1,24 @@
+# Dependencias para entorno LOCAL (sin Docker, sin PostgreSQL)
+# Usa SQLite como base de datos
+# Validado con Python 3.14 — 2026-06-18
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0.30
+pydantic>=2.9
+pydantic[email]
+pydantic-settings>=2.5
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt==4.0.1
+python-multipart
+pandas>=2.3
+openpyxl
+xlrd
+apscheduler
+python-dotenv
+httpx
+structlog
+python-dateutil
+xlsxwriter
+reportlab
+tzdata
