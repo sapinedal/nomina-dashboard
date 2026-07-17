@@ -35,7 +35,25 @@ def get_db():
 def create_tables():
     """Crear todas las tablas definidas en los modelos."""
     Base.metadata.create_all(bind=engine)
+    _create_salarios_table()
     _migrate_columns()
+
+
+def _create_salarios_table():
+    """Crear la tabla de salarios si no existe (indispensable para cálculos del dashboard)."""
+    from sqlalchemy import text
+    sql = """
+    CREATE TABLE IF NOT EXISTS salarios_empleados (
+        cedula VARCHAR(30) PRIMARY KEY,
+        salario NUMERIC(15, 2) NOT NULL
+    );
+    """
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(sql))
+            conn.commit()
+        except Exception:
+            pass
 
 
 def _migrate_columns():

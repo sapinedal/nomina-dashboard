@@ -151,6 +151,7 @@ def sync_trazalo(db: Session) -> dict:
 
     cur.execute("""
         SELECT u.documento AS cedula,
+               u.salario,
                TRIM(CONCAT_WS(' ', u.primer_nombre, u.segundo_nombre, u.primer_apellido, u.segundo_apellido)) AS nombre,
                COALESCE(NULLIF(TRIM(u.area_informativa), ''), a.nombre) AS area,
                s.nombre AS sede, c.nombre AS cargo
@@ -163,6 +164,31 @@ def sync_trazalo(db: Session) -> dict:
     roster = cur.fetchall()
     cur.close()
     conn.close()
+
+    # Sincronizar salarios en la tabla local salarios_empleados
+    from sqlalchemy import text
+    salarios_a_sincronizar = []
+    for u in roster:
+        cedula = _clean_cedula(u["cedula"])
+        salario = u.get("salario")
+        if cedula and salario is not None:
+            try:
+                salario_val = float(salario)
+                salarios_a_sincronizar.append({"cedula": cedula, "salario": salario_val})
+            except (ValueError, TypeError):
+                continue
+
+    if salarios_a_sincronizar:
+        sql_upsert = text("""
+            INSERT INTO salarios_empleados (cedula, salario)
+            VALUES (:cedula, :salario)
+            ON CONFLICT (cedula) 
+            DO UPDATE SET salario = EXCLUDED.salario
+        """)
+        for item in salarios_a_sincronizar:
+            db.execute(sql_upsert, item)
+        db.commit()
+        logger.info("trazalo_salarios_sincronizados", total=len(salarios_a_sincronizar))
 
     por_periodo: dict[str, list] = defaultdict(list)
     for f in filas:
