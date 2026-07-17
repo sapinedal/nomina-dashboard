@@ -52,12 +52,11 @@ services:
 
   # ── Frontend / Proxy Nginx ────────────────────────────────
   nginx:
-    image: nginx:1.25-alpine
+    build:
+      context: .
+      dockerfile: ./nginx/Dockerfile
     container_name: nomina_nginx
     restart: unless-stopped
-    volumes:
-      - ./frontend:/usr/share/nginx/html:ro
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     # ports:
     #   - "80:80"
     depends_on:
