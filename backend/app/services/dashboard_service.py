@@ -424,35 +424,39 @@ def get_kpis(db: Session, filters: dict) -> KPIResponse:
     # Empleados recontratados (que tuvieron retiro en un contrato anterior) quedan como activos
     # porque su presencia en el archivo ya confirma que están activos ese mes.
     # REGISTRO MANUAL siempre aplica (decisión administrativa explícita, independiente del archivo).
-    sql_estados = text(f"""
-        SELECT
-            SUM(CASE WHEN NOT EXISTS (
-                    SELECT 1 FROM novedades_nomina r
-                    WHERE r.cedula = emp.cedula
-                      AND r.es_valido = 1
-                      AND (LOWER(r.tipo_novedad) LIKE '%renuncia%'
-                           OR LOWER(r.tipo_novedad) LIKE '%terminacion%')
-                      AND (r.archivo_origen = :arch_activos
-                           OR r.archivo_origen = 'REGISTRO MANUAL')
-                ) THEN 1 ELSE 0 END) AS activos,
-            SUM(CASE WHEN EXISTS (
-                    SELECT 1 FROM novedades_nomina r
-                    WHERE r.cedula = emp.cedula
-                      AND r.es_valido = 1
-                      AND (LOWER(r.tipo_novedad) LIKE '%renuncia%'
-                           OR LOWER(r.tipo_novedad) LIKE '%terminacion%')
-                      AND (r.archivo_origen = :arch_activos
-                           OR r.archivo_origen = 'REGISTRO MANUAL')
-                ) THEN 1 ELSE 0 END) AS inactivos
-        FROM (
-            SELECT DISTINCT n.cedula
-            FROM novedades_nomina n
-            WHERE {where_activos}
-        ) emp
-    """)
-    row_estados   = db.execute(sql_estados, params_activos).fetchone()
-    emp_activos   = int(row_estados.activos   or 0)
-    emp_inactivos = int(row_estados.inactivos or 0)
+    if arch_activos:
+        sql_estados = text(f"""
+            SELECT
+                SUM(CASE WHEN NOT EXISTS (
+                        SELECT 1 FROM novedades_nomina r
+                        WHERE r.cedula = emp.cedula
+                          AND r.es_valido = 1
+                          AND (LOWER(r.tipo_novedad) LIKE '%renuncia%'
+                               OR LOWER(r.tipo_novedad) LIKE '%terminacion%')
+                          AND (r.archivo_origen = :arch_activos
+                               OR r.archivo_origen = 'REGISTRO MANUAL')
+                    ) THEN 1 ELSE 0 END) AS activos,
+                SUM(CASE WHEN EXISTS (
+                        SELECT 1 FROM novedades_nomina r
+                        WHERE r.cedula = emp.cedula
+                          AND r.es_valido = 1
+                          AND (LOWER(r.tipo_novedad) LIKE '%renuncia%'
+                               OR LOWER(r.tipo_novedad) LIKE '%terminacion%')
+                          AND (r.archivo_origen = :arch_activos
+                               OR r.archivo_origen = 'REGISTRO MANUAL')
+                    ) THEN 1 ELSE 0 END) AS inactivos
+            FROM (
+                SELECT DISTINCT n.cedula
+                FROM novedades_nomina n
+                WHERE {where_activos}
+            ) emp
+        """)
+        row_estados   = db.execute(sql_estados, params_activos).fetchone()
+        emp_activos   = int(row_estados.activos   or 0) if row_estados else 0
+        emp_inactivos = int(row_estados.inactivos or 0) if row_estados else 0
+    else:
+        emp_activos   = 0
+        emp_inactivos = 0
 
     # Delta vs período anterior (también basado en el archivo del período previo)
     delta_nov = delta_emp = delta_val = None
