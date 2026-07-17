@@ -5,6 +5,7 @@ Ejecuta el proceso ETL el día 30 de cada mes a las 23:00 horas.
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -100,6 +101,7 @@ def start_scheduler():
             _trazalo_job,
             trigger="interval",
             minutes=settings.TRAZALO_SYNC_INTERVAL_MINUTES,
+            next_run_time=datetime.now(timezone.utc),  # sync inmediato al arrancar, no esperar 1er intervalo
             id="trazalo_sync",
             name="Sincronización Trazalo",
             replace_existing=True,
