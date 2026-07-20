@@ -99,8 +99,14 @@ function showToast(message, type = 'success') {
   const icons = { success: 'check-circle-fill', danger: 'exclamation-triangle-fill', info: 'info-circle-fill', warning: 'exclamation-circle-fill' };
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
-  toast.innerHTML = `<i class="bi bi-${icons[type] || 'info-circle-fill'}"></i>${message}
-    <button style="margin-left:auto;background:none;border:none;color:inherit;cursor:pointer;font-size:.9rem" onclick="this.closest('.toast').remove()">✕</button>`;
+  // El icono y el botón son estructura fija; el `message` puede venir de un
+  // error de la API (que a su vez puede reflejar datos de origen), así que se
+  // inserta como nodo de texto (textContent) — nunca interpolado en innerHTML —
+  // para que un mensaje con HTML no se ejecute (XSS). Autónomo: no depende de
+  // escape-html.js, que no todas las páginas cargan.
+  toast.innerHTML = `<i class="bi bi-${icons[type] || 'info-circle-fill'}"></i><span class="toast-msg"></span>` +
+    `<button style="margin-left:auto;background:none;border:none;color:inherit;cursor:pointer;font-size:.9rem" onclick="this.closest('.toast').remove()">✕</button>`;
+  toast.querySelector('.toast-msg').textContent = message;
   container.appendChild(toast);
   setTimeout(() => toast.remove(), 5000);
 }

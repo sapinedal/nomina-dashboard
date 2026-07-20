@@ -355,7 +355,7 @@ function _renderAreaTabla(rows) {
       <span style="font-size:.75rem;font-weight:700;color:${barClr};min-width:38px">${pct}%</span>
     </div>`;
     return `<tr>
-      <td style="font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.area}">${r.area}</td>
+      <td style="font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.area)}">${escapeHtml(r.area)}</td>
       <td style="text-align:right;font-weight:700">${formatNumber(r.total_empleados)}</td>
       <td style="text-align:right"><span style="color:#16a34a;font-weight:600">${formatNumber(r.activos)}</span></td>
       <td style="text-align:right"><span style="color:${r.inactivos > 0 ? '#dc2626' : '#94a3b8'};font-weight:600">${formatNumber(r.inactivos)}</span></td>
@@ -393,7 +393,7 @@ async function loadEmpleadosLista() {
     if (areaSelect) {
       const areas = [...new Set(_empleadosData.map(r => r.area).filter(Boolean))].sort();
       areaSelect.innerHTML = '<option value="">Todas las áreas</option>' +
-        areas.map(a => `<option value="${a}">${a}</option>`).join('');
+        areas.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
       // Sincronizar con el filtro del panel superior si hay área activa
       areaSelect.value = currentFilters.area || '';
       _empFiltroArea   = currentFilters.area || '';
@@ -423,12 +423,12 @@ function _renderEmpleadosTabla(rows) {
   }
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td style="font-family:monospace;color:#64748b">${r.cedula ?? '—'}</td>
-      <td title="${r.nombre ?? ''}">${r.nombre ?? '—'}</td>
-      <td title="${r.area ?? ''}">${r.area ?? '—'}</td>
-      <td title="${r.cargo ?? ''}">${r.cargo ?? '—'}</td>
+      <td style="font-family:monospace;color:#64748b">${escapeHtml(r.cedula ?? '—')}</td>
+      <td title="${escapeHtml(r.nombre ?? '')}">${escapeHtml(r.nombre ?? '—')}</td>
+      <td title="${escapeHtml(r.area ?? '')}">${escapeHtml(r.area ?? '—')}</td>
+      <td title="${escapeHtml(r.cargo ?? '')}">${escapeHtml(r.cargo ?? '—')}</td>
       <td>${formatPeriodo(r.ultimo_periodo)}</td>
-      <td title="${r.ultima_novedad ?? ''}" style="color:#64748b;font-size:.75rem">${r.ultima_novedad ?? '—'}</td>
+      <td title="${escapeHtml(r.ultima_novedad ?? '')}" style="color:#64748b;font-size:.75rem">${escapeHtml(r.ultima_novedad ?? '—')}</td>
       <td><span class="emp-badge-${r.estado}">${r.estado === 'activo' ? '● Activo' : '● Inactivo'}</span></td>
     </tr>`).join('');
 }
@@ -590,8 +590,8 @@ async function loadPanelOperativo() {
           <div class="alert-card ${a.severidad}">
             <div class="alert-card-icon">${a.severidad === 'alta' ? '🔴' : a.severidad === 'media' ? '🟡' : '🟢'}</div>
             <div class="alert-card-body">
-              <strong>${_alertTitulo(a.tipo)} — ${formatNumber(a.cantidad)} caso(s)</strong>
-              <span>${a.mensaje}</span>
+              <strong>${escapeHtml(_alertTitulo(a.tipo))} — ${formatNumber(a.cantidad)} caso(s)</strong>
+              <span>${escapeHtml(a.mensaje)}</span>
             </div>
           </div>`).join('');
       }
@@ -601,7 +601,7 @@ async function loadPanelOperativo() {
   } catch (e) {
     console.error('Error panel operativo:', e);
     const listEl = document.getElementById('op-alertas-list');
-    if (listEl) listEl.innerHTML = `<div style="color:var(--danger);padding:12px">${e.message}</div>`;
+    if (listEl) listEl.innerHTML = `<div style="color:var(--danger);padding:12px">${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -628,7 +628,7 @@ async function loadAlertasDetalle(panelFilters) {
     renderAlertasDetalle();
   } catch (e) {
     console.error('Error detalle alertas:', e);
-    tbody.innerHTML = `<tr><td colspan="10" style="color:var(--danger);padding:12px">${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="color:var(--danger);padding:12px">${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -652,16 +652,16 @@ function renderAlertasDetalle() {
   const badge = (sev) => sev === 'alta' ? '🔴' : sev === 'media' ? '🟡' : '🟢';
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td>${badge(r.severidad)} ${r.tipo_alerta}</td>
-      <td>${r.cedula ?? '—'}</td>
-      <td>${r.nombre ?? '—'}</td>
-      <td>${r.area ?? '—'}</td>
-      <td>${r.tipo_novedad ?? '—'}</td>
-      <td>${r.periodo ?? '—'}</td>
-      <td>${r.fecha_inicio ?? '—'}</td>
-      <td style="text-align:right">${r.dias ?? '—'}</td>
-      <td style="color:var(--muted)">${r.motivo ?? '—'}</td>
-      <td style="font-size:.72rem;color:var(--muted)">${r.archivo_origen ?? '—'}</td>
+      <td>${badge(r.severidad)} ${escapeHtml(r.tipo_alerta)}</td>
+      <td>${escapeHtml(r.cedula ?? '—')}</td>
+      <td>${escapeHtml(r.nombre ?? '—')}</td>
+      <td>${escapeHtml(r.area ?? '—')}</td>
+      <td>${escapeHtml(r.tipo_novedad ?? '—')}</td>
+      <td>${escapeHtml(r.periodo ?? '—')}</td>
+      <td>${escapeHtml(r.fecha_inicio ?? '—')}</td>
+      <td style="text-align:right">${escapeHtml(r.dias ?? '—')}</td>
+      <td style="color:var(--muted)">${escapeHtml(r.motivo ?? '—')}</td>
+      <td style="font-size:.72rem;color:var(--muted)">${escapeHtml(r.archivo_origen ?? '—')}</td>
     </tr>`).join('');
 }
 
@@ -767,7 +767,7 @@ async function loadPanelAusentismo() {
       } else {
         tbodyAus.innerHTML = data.valor_por_tipo.map(t => `
           <tr>
-            <td style="font-size:.8rem;font-weight:600">${t.tipo}</td>
+            <td style="font-size:.8rem;font-weight:600">${escapeHtml(t.tipo)}</td>
             <td style="text-align:right">${formatNumber(t.dias)}</td>
             <td style="text-align:right">${formatNumber(t.eventos)}</td>
             <td style="text-align:right;font-weight:700;color:${t.remunerado ? '#166534' : '#9ca3af'}">${formatCOP(t.valor)}</td>
@@ -827,7 +827,7 @@ async function loadPanelHorasExtras() {
       } else {
         tbodyHe.innerHTML = data.valor_por_tipo.map(t => `
           <tr>
-            <td style="font-size:.8rem;font-weight:600">${t.tipo}</td>
+            <td style="font-size:.8rem;font-weight:600">${escapeHtml(t.tipo)}</td>
             <td style="text-align:right">${formatNumber(t.horas)} h</td>
             <td style="text-align:right">${formatNumber(t.eventos)}</td>
             <td style="text-align:center"><span style="font-size:.78rem;font-weight:700;color:#6d28d9">×${t.factor}</span></td>
@@ -858,8 +858,8 @@ async function loadPanelHorasExtras() {
       } else {
         tbody.innerHTML = data.top_empleados.map(e => `
           <tr>
-            <td style="font-size:.8rem">${e.nombre || e.cedula}</td>
-            <td><span class="badge badge-area" style="font-size:.7rem">${e.area || '—'}</span></td>
+            <td style="font-size:.8rem">${escapeHtml(e.nombre || e.cedula)}</td>
+            <td><span class="badge badge-area" style="font-size:.7rem">${escapeHtml(e.area || '—')}</span></td>
             <td style="text-align:right;font-weight:700;color:${e.excede_limite ? 'var(--danger)' : 'var(--text)'}">
               ${formatNumber(e.horas)} h
             </td>
@@ -901,7 +901,7 @@ async function loadTable() {
     renderTable(result.data);
     renderPagination();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--danger)"><i class="bi bi-exclamation-triangle"></i> ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--danger)"><i class="bi bi-exclamation-triangle"></i> ${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -924,17 +924,17 @@ function renderTable(rows) {
     }
     return `
     <tr>
-      <td style="font-family:monospace;font-size:.8rem">${r.cedula || '—'}</td>
-      <td>${r.nombre_empleado || '—'}</td>
-      <td><span class="badge badge-area">${r.area || '—'}</span></td>
-      <td style="font-size:.8rem;color:var(--muted)">${r.sede || '—'}</td>
-      <td><span class="badge badge-tipo">${r.tipo_novedad || '—'}</span></td>
+      <td style="font-family:monospace;font-size:.8rem">${escapeHtml(r.cedula || '—')}</td>
+      <td>${escapeHtml(r.nombre_empleado || '—')}</td>
+      <td><span class="badge badge-area">${escapeHtml(r.area || '—')}</span></td>
+      <td style="font-size:.8rem;color:var(--muted)">${escapeHtml(r.sede || '—')}</td>
+      <td><span class="badge badge-tipo">${escapeHtml(r.tipo_novedad || '—')}</span></td>
       <td style="font-size:.8rem">${formatDate(r.fecha_inicio)}</td>
       <td style="font-size:.8rem">${formatDate(r.fecha_fin)}</td>
-      <td style="text-align:right">${cantLabel}</td>
+      <td style="text-align:right">${escapeHtml(cantLabel)}</td>
       <td style="text-align:right;font-family:monospace;font-size:.8rem">${r.valor != null ? formatCOP(r.valor) : '—'}</td>
-      <td><span class="badge badge-periodo">${r.periodo || '—'}</span></td>
-      <td style="font-size:.75rem;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.archivo_origen || '—'}</td>
+      <td><span class="badge badge-periodo">${escapeHtml(r.periodo || '—')}</span></td>
+      <td style="font-size:.75rem;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.archivo_origen || '—')}</td>
     </tr>`;
   }).join('');
 }
@@ -1088,16 +1088,16 @@ function renderAusentismoEmpleados(records) {
 
   tbody.innerHTML = records.map(r => `
     <tr>
-      <td>${r.cedula}</td>
-      <td>${r.nombre}</td>
-      <td>${r.area}</td>
-      <td>${r.sede}</td>
-      <td style="font-size:.8rem;font-weight:600">${r.tipo_novedad}</td>
-      <td>${r.fecha_inicio}</td>
-      <td>${r.fecha_fin}</td>
+      <td>${escapeHtml(r.cedula)}</td>
+      <td>${escapeHtml(r.nombre)}</td>
+      <td>${escapeHtml(r.area)}</td>
+      <td>${escapeHtml(r.sede)}</td>
+      <td style="font-size:.8rem;font-weight:600">${escapeHtml(r.tipo_novedad)}</td>
+      <td>${escapeHtml(r.fecha_inicio)}</td>
+      <td>${escapeHtml(r.fecha_fin)}</td>
       <td style="text-align:right;font-weight:600">${formatNumber(r.dias)}</td>
       <td style="text-align:right">${formatCOP(r.valor)}</td>
-      <td>${r.periodo}</td>
+      <td>${escapeHtml(r.periodo)}</td>
     </tr>
   `).join('');
 }

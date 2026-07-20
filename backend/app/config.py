@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
+    # Contraseña del admin sembrado en el PRIMER arranque (BD sin usuario admin).
+    # Solo se usa al crear el admin; nunca sobrescribe la contraseña de un admin
+    # existente. Configurar en el .env de producción; el default es solo para
+    # levantar un entorno nuevo rápido.
+    SEED_ADMIN_PASSWORD: str = "Admin2024!"
+
     # Base de datos
     DATABASE_URL: str = "postgresql://nomina_user:password@localhost:5432/nomina_dashboard"
 
