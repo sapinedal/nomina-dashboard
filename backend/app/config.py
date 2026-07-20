@@ -2,13 +2,18 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 from functools import lru_cache
 
+# Valores de arranque rápido para entornos DEBUG=true (dev local, sin Docker).
+# Nunca deben llegar a un despliegue con DEBUG=false — ver Settings.model_post_init.
+_INSECURE_DEFAULT_SECRET_KEY = "dev-secret-key-change-in-production"
+_INSECURE_DEFAULT_ADMIN_PASSWORD = "Admin2024!"
+
 
 class Settings(BaseSettings):
     # Aplicación
     APP_NAME: str = "NóminaBoard"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
-    SECRET_KEY: str = "dev-secret-key-change-in-production"
+    SECRET_KEY: str = _INSECURE_DEFAULT_SECRET_KEY
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
@@ -16,7 +21,7 @@ class Settings(BaseSettings):
     # Solo se usa al crear el admin; nunca sobrescribe la contraseña de un admin
     # existente. Configurar en el .env de producción; el default es solo para
     # levantar un entorno nuevo rápido.
-    SEED_ADMIN_PASSWORD: str = "Admin2024!"
+    SEED_ADMIN_PASSWORD: str = _INSECURE_DEFAULT_ADMIN_PASSWORD
 
     # Base de datos
     DATABASE_URL: str = "postgresql://nomina_user:password@localhost:5432/nomina_dashboard"
@@ -62,6 +67,37 @@ class Settings(BaseSettings):
         if "*" in origins:
             return ["*"]
         return origins
+
+    def model_post_init(self, __context) -> None:
+        """Falla el arranque si DEBUG=false corre con valores inseguros.
+
+        Sin esto, un despliegue que olvide configurar SECRET_KEY o
+        SEED_ADMIN_PASSWORD sirve tráfico con credenciales conocidas
+        públicamente (este mismo archivo) en lugar de fallar de forma
+        ruidosa. DEBUG=true (dev local) mantiene el arranque rápido sin
+        exigir estas variables.
+        """
+        if self.DEBUG:
+            return
+        if not self.SECRET_KEY or self.SECRET_KEY == _INSECURE_DEFAULT_SECRET_KEY:
+            raise ValueError(
+                "SECRET_KEY no está configurado o usa el valor de desarrollo "
+                "(DEBUG=false). Generar con: "
+                "python -c \"import secrets; print(secrets.token_urlsafe(32))\" "
+                "y definirlo como variable de entorno SECRET_KEY."
+            )
+        if len(self.SECRET_KEY) < 32:
+            raise ValueError(
+                f"SECRET_KEY tiene {len(self.SECRET_KEY)} caracteres; se "
+                "requieren al menos 32 para resistir fuerza bruta sobre la "
+                "firma HS256."
+            )
+        if not self.SEED_ADMIN_PASSWORD or self.SEED_ADMIN_PASSWORD == _INSECURE_DEFAULT_ADMIN_PASSWORD:
+            raise ValueError(
+                "SEED_ADMIN_PASSWORD no está configurado o usa el valor de "
+                "desarrollo (DEBUG=false). Definir una contraseña fuerte como "
+                "variable de entorno SEED_ADMIN_PASSWORD antes de desplegar."
+            )
 
 
 @lru_cache()
