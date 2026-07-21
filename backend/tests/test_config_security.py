@@ -22,6 +22,13 @@ class TestSettingsFailClosed(unittest.TestCase):
     STRONG_ADMIN_PASSWORD = "Un-P4ssword-Fuerte-2026"
     DUMMY_DB_URL = "sqlite:///:memory:"
 
+    # Placeholders literales de .env.example — deben quedar sincronizados con
+    # ese archivo. Si .env.example cambia, este test debe cambiar con él.
+    ENV_EXAMPLE_SECRET_PLACEHOLDER = (
+        "cambia_este_valor_por_una_clave_secreta_muy_larga_y_aleatoria"
+    )
+    ENV_EXAMPLE_ADMIN_PASSWORD_PLACEHOLDER = "cambia_esta_contrasena_del_admin_semilla"
+
     @classmethod
     def setUpClass(cls):
         try:
@@ -83,6 +90,35 @@ class TestSettingsFailClosed(unittest.TestCase):
         settings = self._settings()
         self.assertEqual(settings.SECRET_KEY, self.STRONG_SECRET)
         self.assertEqual(settings.SEED_ADMIN_PASSWORD, self.STRONG_ADMIN_PASSWORD)
+
+    # --- Regresion: placeholders de .env.example sin editar (hallazgo de
+    # revision de codigo sobre este mismo PR) ---------------------------
+
+    def test_debug_false_rechaza_placeholder_secret_key_de_env_example(self):
+        """Copiar .env.example a .env sin editar SECRET_KEY debe fallar.
+
+        Antes del fix, este placeholder (61 caracteres, distinto del
+        default de config.py) pasaba sin ser detectado: no era igual al
+        default y superaba el chequeo de longitud minima.
+        """
+        with self.assertRaisesRegex(ValueError, "SECRET_KEY"):
+            self._settings(SECRET_KEY=self.ENV_EXAMPLE_SECRET_PLACEHOLDER)
+
+    def test_debug_false_rechaza_placeholder_admin_password_de_env_example(self):
+        with self.assertRaisesRegex(ValueError, "SEED_ADMIN_PASSWORD"):
+            self._settings(
+                SEED_ADMIN_PASSWORD=self.ENV_EXAMPLE_ADMIN_PASSWORD_PLACEHOLDER
+            )
+
+    def test_debug_false_reporta_todos_los_problemas_juntos(self):
+        """Si ambas credenciales estan mal, el mensaje debe listar las dos
+        en un solo error -- no solo la primera que encuentra."""
+        with self.assertRaisesRegex(ValueError, "SECRET_KEY") as ctx:
+            self._settings(
+                SECRET_KEY=self.DEFAULT_SECRET,
+                SEED_ADMIN_PASSWORD=self.DEFAULT_ADMIN_PASSWORD,
+            )
+        self.assertIn("SEED_ADMIN_PASSWORD", str(ctx.exception))
 
 
 if __name__ == "__main__":
