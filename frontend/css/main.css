@@ -622,6 +622,18 @@ body.dark-mode .panel-tab.active { color: #60a5fa; border-bottom-color: #60a5fa;
 .eco-badge-rem  { background:#dcfce7; color:#166534; padding:2px 8px; border-radius:20px; font-size:.68rem; font-weight:600; }
 .eco-badge-norem{ background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:20px; font-size:.68rem; font-weight:600; }
 
+/* Filas clickeables de la tabla de tipos de HE/recargo (drill-down).
+   Prefijo #he-valor-tabla + doble clase en la fila activa: ":hover" cuenta
+   como una clase más en la especificidad CSS, así que un simple
+   ".he-tipo-row--activa td" (1 clase) queda por debajo de
+   ".he-tipo-row:hover td" (2 clases) y el hover tapa el resaltado de la fila
+   seleccionada mientras el cursor sigue sobre ella. Iguala la especificidad
+   repitiendo la clase base para que gane por orden de declaración. */
+#he-valor-tabla .he-tipo-row:hover td { background:#fef2f2; }
+#he-valor-tabla .he-tipo-row.he-tipo-row--activa td { background:#fee2e2; box-shadow: inset 3px 0 0 #991b1b; }
+body.dark-mode #he-valor-tabla .he-tipo-row:hover td { background:#3a2430; }
+body.dark-mode #he-valor-tabla .he-tipo-row.he-tipo-row--activa td { background:#4a2530; box-shadow: inset 3px 0 0 #f87171; }
+
 /* ── Tabla empleados activos/inactivos ───────────────────── */
 .emp-tabla { width:100%; border-collapse:collapse; font-size:.8rem; }
 .emp-tabla thead th {
