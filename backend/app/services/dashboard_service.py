@@ -229,13 +229,42 @@ PALETTE = [
 ]
 
 
+def _effective_areas(filters: dict) -> Optional[list[str]]:
+    """Resuelve qué áreas debe ver esta consulta, cruzando la restricción del
+    usuario autenticado (filters['_allowed_areas'] -- ver dashboard.py, se
+    calcula SIEMPRE server-side, el frontend no puede escribir esta clave)
+    con el área que el usuario haya elegido en el filtro de UI (filters['area']).
+
+    Devuelve:
+      - None                si no hay restricción (admin) y no hay filtro de área -> sin filtrar
+      - [un_area]            si no hay restricción y el usuario eligió un área -> comportamiento actual sin cambios
+      - lista de N áreas     si hay restricción: la elegida (si es una de las suyas) o TODAS las suyas
+      - []                   restringido sin áreas asignadas -> debe devolver cero filas (fail-closed)
+    """
+    allowed = filters.get("_allowed_areas")
+    chosen = filters.get("area")
+    if allowed is None:
+        return [chosen] if chosen else None
+    if chosen and chosen in allowed:
+        return [chosen]
+    return list(allowed)
+
+
+def _apply_area_filter(query, filters: dict):
+    """Versión ORM de _area_sql_clause, para queries ad-hoc que no pasan por
+    _apply_filters (ej. get_alerts, get_alerts_detalle)."""
+    areas = _effective_areas(filters)
+    if areas is None:
+        return query
+    return query.filter(NovedadNomina.area.in_(areas)) if areas else query.filter(False)
+
+
 def _apply_filters(query, filters: dict):
     if filters.get("fecha_inicio"):
         query = query.filter(NovedadNomina.fecha_inicio >= filters["fecha_inicio"])
     if filters.get("fecha_fin"):
         query = query.filter(NovedadNomina.fecha_fin <= filters["fecha_fin"])
-    if filters.get("area"):
-        query = query.filter(NovedadNomina.area == filters["area"])
+    query = _apply_area_filter(query, filters)
     if filters.get("sede"):
         query = query.filter(NovedadNomina.sede == filters["sede"])
     if filters.get("tipo_novedad"):
@@ -356,13 +385,11 @@ def get_kpis(db: Session, filters: dict) -> KPIResponse:
     # (arch_activos ya calculado al inicio de la función).
     # Construir parámetros de valor basados en archivo_origen (no en periodo)
     arch_val_where = "AND n.archivo_origen = :arch_val" if arch_activos else ""
-    area_val_where = "AND n.area = :area_val" if filters.get("area") else ""
+    area_val_where, area_val_params = _area_sql_clause(filters, param_prefix="area_val")
     sede_val_where = "AND n.sede = :sede_val" if filters.get("sede") else ""
-    params_val: dict = {}
+    params_val: dict = {**area_val_params}
     if arch_activos:
         params_val["arch_val"] = arch_activos
-    if filters.get("area"):
-        params_val["area_val"] = filters["area"]
     if filters.get("sede"):
         params_val["sede_val"] = filters["sede"]
 
@@ -430,13 +457,12 @@ def get_kpis(db: Session, filters: dict) -> KPIResponse:
     valor_calculado = salarios_base + valor_horas_extras
 
     where_activos_parts = ["n.es_valido = 1", "n.cedula IS NOT NULL"]
-    params_activos: dict = {}
+    area_act_clause, params_activos = _area_sql_clause(filters, param_prefix="area_act")
+    if area_act_clause:
+        where_activos_parts.append(area_act_clause[len(" AND "):])
     if arch_activos:
         where_activos_parts.append("n.archivo_origen = :arch_activos")
         params_activos["arch_activos"] = arch_activos
-    if filters.get("area"):
-        where_activos_parts.append("n.area = :area_act")
-        params_activos["area_act"] = filters["area"]
     if filters.get("sede"):
         where_activos_parts.append("n.sede = :sede_act")
         params_activos["sede_act"] = filters["sede"]
@@ -694,8 +720,7 @@ def get_alerts(db: Session, filters: dict) -> AlertsResponse:
     base_all = db.query(NovedadNomina)
     if filters.get("periodo"):
         base_all = base_all.filter(NovedadNomina.periodo == filters["periodo"])
-    if filters.get("area"):
-        base_all = base_all.filter(NovedadNomina.area == filters["area"])
+    base_all = _apply_area_filter(base_all, filters)
     if filters.get("sede"):
         base_all = base_all.filter(NovedadNomina.sede == filters["sede"])
 
@@ -842,8 +867,7 @@ def get_alerts_detalle(db: Session, filters: dict) -> dict:
     base_all = db.query(NovedadNomina)
     if filters.get("periodo"):
         base_all = base_all.filter(NovedadNomina.periodo == filters["periodo"])
-    if filters.get("area"):
-        base_all = base_all.filter(NovedadNomina.area == filters["area"])
+    base_all = _apply_area_filter(base_all, filters)
     if filters.get("sede"):
         base_all = base_all.filter(NovedadNomina.sede == filters["sede"])
 
@@ -918,6 +942,22 @@ def get_alerts_detalle(db: Session, filters: dict) -> dict:
     return {"total": len(detalle), "detalle": detalle}
 
 
+def _area_sql_clause(filters: dict, alias: str = "n", param_prefix: str = "area") -> tuple:
+    """Versión en SQL crudo de _effective_areas, para los bloques que
+    construyen su propio WHERE (no pasan por _apply_filters ni
+    _panel_filters_sql). `param_prefix` evita choques de nombre de parámetro
+    cuando una misma función arma varias queries con esta cláusula.
+    Retorna (fragmento_sql_con_AND_al_inicio_o_vacio, params)."""
+    areas = _effective_areas(filters)
+    if areas is None:
+        return "", {}
+    if not areas:
+        return " AND 1=0", {}
+    keys = [f"{param_prefix}_{i}" for i in range(len(areas))]
+    placeholders = ", ".join(f":{k}" for k in keys)
+    return f" AND {alias}.area IN ({placeholders})", dict(zip(keys, areas))
+
+
 def _panel_filters_sql(filters: dict, alias: str = "n", full: bool = False) -> tuple:
     """Retorna (where_extra, params) para consultas SQL raw de paneles.
     full=True incluye fecha_inicio, fecha_fin y tipo_novedad además de periodo/area/sede."""
@@ -925,9 +965,15 @@ def _panel_filters_sql(filters: dict, alias: str = "n", full: bool = False) -> t
     if filters.get("periodo"):
         clauses.append(f"{alias}.periodo = :periodo")
         params["periodo"] = filters["periodo"]
-    if filters.get("area"):
-        clauses.append(f"{alias}.area = :area")
-        params["area"] = filters["area"]
+    area_clause, area_params = _area_sql_clause(filters, alias, param_prefix="pf_area")
+    if area_clause:
+        # _area_sql_clause devuelve el fragmento con el " AND " ya incluido
+        # (para uso directo); acá se arma con join más abajo, así que se quita
+        # ese prefijo literal en vez de usar str.lstrip (que opera por
+        # conjunto de caracteres, no por substring, y rompería con alias que
+        # empiecen con A/N/D).
+        clauses.append(area_clause[len(" AND "):])
+        params.update(area_params)
     if filters.get("sede"):
         clauses.append(f"{alias}.sede = :sede")
         params["sede"] = filters["sede"]
@@ -1002,8 +1048,7 @@ def get_panel_ausentismo(db: Session, filters: dict) -> dict:
     aus_filter = db.query(NovedadNomina).filter(NovedadNomina.es_valido == 1)
     if arch_aus:
         aus_filter = aus_filter.filter(NovedadNomina.archivo_origen == arch_aus)
-    if filters.get("area"):
-        aus_filter = aus_filter.filter(NovedadNomina.area == filters["area"])
+    aus_filter = _apply_area_filter(aus_filter, filters)
     if filters.get("sede"):
         aus_filter = aus_filter.filter(NovedadNomina.sede == filters["sede"])
 
@@ -1067,13 +1112,10 @@ def get_panel_ausentismo(db: Session, filters: dict) -> dict:
     # ── Valores monetarios por tipo (JOIN con salarios) ──────────
     # Mismo criterio de archivo_origen que aus_filter arriba (no periodo).
     arch_where_aus = "AND n.archivo_origen = :arch_aus" if arch_aus else ""
-    area_where_aus = "AND n.area = :area_aus" if filters.get("area") else ""
+    area_where_aus, params = _area_sql_clause(filters, param_prefix="area_aus")
     sede_where_aus = "AND n.sede = :sede_aus" if filters.get("sede") else ""
-    params: dict = {}
     if arch_aus:
         params["arch_aus"] = arch_aus
-    if filters.get("area"):
-        params["area_aus"] = filters["area"]
     if filters.get("sede"):
         params["sede_aus"] = filters["sede"]
     extra_where = f"{arch_where_aus} {area_where_aus} {sede_where_aus}"
@@ -1132,8 +1174,7 @@ def get_panel_ausentismo(db: Session, filters: dict) -> dict:
         )
 
         # Aplicar filtros de área/sede si existen
-        if filters.get("area"):
-            emp_activos_query = emp_activos_query.filter(NovedadNomina.area == filters["area"])
+        emp_activos_query = _apply_area_filter(emp_activos_query, filters)
         if filters.get("sede"):
             emp_activos_query = emp_activos_query.filter(NovedadNomina.sede == filters["sede"])
 
@@ -1204,8 +1245,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
     )
     if arch_he:
         he_filter = he_filter.filter(NovedadNomina.archivo_origen == arch_he)
-    if filters.get("area"):
-        he_filter = he_filter.filter(NovedadNomina.area == filters["area"])
+    he_filter = _apply_area_filter(he_filter, filters)
     if filters.get("sede"):
         he_filter = he_filter.filter(NovedadNomina.sede == filters["sede"])
 
@@ -1260,11 +1300,8 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
     # Tendencia mensual HISTÓRICA: recorre TODOS los archivos (no solo el período
     # seleccionado), agrupando por el mes derivado del nombre del archivo MMYYYY.xlsx.
     # Solo aplica filtros de área/sede para que la curva muestre toda la historia.
-    tend_area_where = "AND n.area = :t_area" if filters.get("area") else ""
+    tend_area_where, tend_params = _area_sql_clause(filters, param_prefix="t_area")
     tend_sede_where = "AND n.sede = :t_sede" if filters.get("sede") else ""
-    tend_params: dict = {}
-    if filters.get("area"):
-        tend_params["t_area"] = filters["area"]
     if filters.get("sede"):
         tend_params["t_sede"] = filters["sede"]
 
@@ -1298,13 +1335,10 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
 
     # ── Valores monetarios HE (JOIN con salarios) ─────────────────
     arch_where_sql = "AND n.archivo_origen = :arch_he" if arch_he else ""
-    area_where_sql = "AND n.area = :area_he" if filters.get("area") else ""
+    area_where_sql, params_sql = _area_sql_clause(filters, param_prefix="area_he")
     sede_where_sql = "AND n.sede = :sede_he" if filters.get("sede") else ""
-    params_sql: dict = {}
     if arch_he:
         params_sql["arch_he"] = arch_he
-    if filters.get("area"):
-        params_sql["area_he"] = filters["area"]
     if filters.get("sede"):
         params_sql["sede_he"] = filters["sede"]
 
@@ -1418,13 +1452,11 @@ def get_detalle_horas_extras_tipo(db: Session, filters: dict, tipo: str) -> dict
         arch_he = None   # sin período => todo el histórico
 
     arch_where_sql = "AND n.archivo_origen = :arch_he" if arch_he else ""
-    area_where_sql = "AND n.area = :area_he" if filters.get("area") else ""
+    area_where_sql, area_params_sql = _area_sql_clause(filters, param_prefix="area_he")
     sede_where_sql = "AND n.sede = :sede_he" if filters.get("sede") else ""
-    params_sql: dict = {"tipo_he": tipo}
+    params_sql: dict = {"tipo_he": tipo, **area_params_sql}
     if arch_he:
         params_sql["arch_he"] = arch_he
-    if filters.get("area"):
-        params_sql["area_he"] = filters["area"]
     if filters.get("sede"):
         params_sql["sede_he"] = filters["sede"]
 
@@ -1473,15 +1505,27 @@ def get_detalle_horas_extras_tipo(db: Session, filters: dict, tipo: str) -> dict
     }
 
 
-def get_filter_options(db: Session, panel: Optional[str] = None, periodo: Optional[str] = None) -> dict:
+def get_filter_options(
+    db: Session,
+    panel: Optional[str] = None,
+    periodo: Optional[str] = None,
+    allowed_areas: Optional[list[str]] = None,
+) -> dict:
     """Obtener valores únicos para poblar los filtros del frontend.
     Si `panel` es 'ausentismo' u 'horas-extras', las áreas y sedes se
     restringen a las que tienen novedades de esa categoría (mismo criterio
     usado en get_panel_ausentismo / get_panel_horas_extras). Si además se pasa
     `periodo`, se acotan al mes seleccionado usando archivo_origen (mismo
     criterio de los paneles: MMYYYY.xlsx).
-    Para panel 'ejecutivo', excluye áreas administrativas/clínicas que no aplican."""
+    Para panel 'ejecutivo', excluye áreas administrativas/clínicas que no aplican.
+
+    `allowed_areas` (None = admin/sin restricción, ver auth_service.get_user_areas)
+    acota TODO lo que devuelve esta función -- áreas, sedes y tipos -- a lo
+    que exista dentro de esas áreas, para que el desplegable de un usuario
+    restringido no muestre opciones de áreas que no puede consultar."""
     base = db.query(NovedadNomina).filter(NovedadNomina.es_valido == 1)
+    if allowed_areas is not None:
+        base = base.filter(NovedadNomina.area.in_(allowed_areas)) if allowed_areas else base.filter(False)
 
     # Acotar por período (solo tiene sentido para los paneles ausentismo/horas-extras)
     if panel in ('ausentismo', 'horas-extras') and periodo:
@@ -1571,13 +1615,9 @@ def get_resumen_por_area(db: Session, filters: dict) -> list[dict]:
     else:
         arch = None
 
-    params: dict = {"arch": arch}
     arch_where = "AND n.archivo_origen = :arch" if arch else ""
-
-    area_where = ""
-    if filters.get("area"):
-        area_where += " AND n.area = :area"
-        params["area"] = filters["area"]
+    area_where, params = _area_sql_clause(filters, param_prefix="area")
+    params["arch"] = arch
     if filters.get("sede"):
         area_where += " AND n.sede = :sede"
         params["sede"] = filters["sede"]
@@ -1660,10 +1700,19 @@ def get_empleados_lista(db: Session, filters: dict, estado_filter: str = "todos"
     params: dict = {"arch": arch, "max_per": max_per}
     arch_where = "AND n.archivo_origen = :arch" if arch else ""
 
+    # Caso especial: `area` acá es un alias de SELECT (subconsulta correlacionada
+    # AS area), no una columna de novedades_nomina -- por eso no se puede
+    # reusar _area_sql_clause (que arma "alias.area"); HAVING la referencia
+    # directa (sin prefijo de tabla).
     area_having = ""
-    if filters.get("area"):
-        area_having = "HAVING area = :area_filter"
-        params["area_filter"] = filters["area"]
+    _areas_lista = _effective_areas(filters)
+    if _areas_lista is not None:
+        if not _areas_lista:
+            area_having = "HAVING 1=0"
+        else:
+            _keys = [f"area_h_{i}" for i in range(len(_areas_lista))]
+            area_having = f"HAVING area IN ({', '.join(f':{k}' for k in _keys)})"
+            params.update(dict(zip(_keys, _areas_lista)))
 
     sede_where = ""
     if filters.get("sede"):
@@ -1784,8 +1833,7 @@ def get_empleados_ausentismo(db: Session, filters: dict) -> dict:
 
         if arch_aus:
             aus_filter = aus_filter.filter(NovedadNomina.archivo_origen == arch_aus)
-        if filters.get("area"):
-            aus_filter = aus_filter.filter(NovedadNomina.area == filters["area"])
+        aus_filter = _apply_area_filter(aus_filter, filters)
         if filters.get("sede"):
             aus_filter = aus_filter.filter(NovedadNomina.sede == filters["sede"])
 
