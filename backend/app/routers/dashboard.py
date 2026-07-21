@@ -240,6 +240,19 @@ async def panel_horas_extras(
     return svc.get_panel_horas_extras(db, filters)
 
 
+@router.get("/panel/horas-extras/detalle", summary="Detalle por empleado de un tipo de HE/recargo")
+async def panel_horas_extras_detalle(
+    tipo: str = Query(..., description="Tipo de HE/recargo a desglosar (ej. 'RECARGO NOCTURNO')"),
+    area: Optional[str] = Query(None),
+    sede: Optional[str] = Query(None),
+    periodo: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    filters = {"area": area, "sede": sede, "periodo": periodo}
+    return svc.get_detalle_horas_extras_tipo(db, filters, tipo)
+
+
 @router.get("/ausentismo/empleados", summary="Lista detallada de empleados con novedades de ausentismo")
 async def empleados_ausentismo(
     area: Optional[str] = Query(None),

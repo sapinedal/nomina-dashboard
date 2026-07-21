@@ -21,6 +21,28 @@ _MESES_ES = {
     'ABRI': '04',   # nombre truncado en algunos archivos
 }
 
+# ── Factores de recargo/HE (fuente única de verdad) ───────────────
+# Multiplicador legal aplicado sobre el valor-hora (salario / 240) por tipo.
+# Los tipos no listados (PERMISO, DISPONIBILIDAD, CITA MÉDICA, etc.) usan 1.0.
+HE_FACTORES: dict[str, float] = {
+    'HORAS EXTRAS DIURNAS': 1.25,
+    'HORAS EXTRAS NOCTURNAS': 1.75,
+    'HORAS EXTRAS DIURNAS FESTIVAS': 2.00,
+    'HORAS EXTRAS NOCTURNAS FESTIVAS': 2.50,
+    'RECARGO FESTIVO': 0.75,
+    'RECARGO FESTIVO NOCTURNO': 1.10,
+    'RECARGO NOCTURNO': 0.35,
+}
+
+# Expresión SQL del factor por tipo, derivada de HE_FACTORES para no repetir el
+# CASE en cada consulta. Alias de la novedad = 'n'. ELSE 1.0 para el resto.
+_HE_FACTOR_CASE = "CASE n.tipo_novedad\n" + "\n".join(
+    f"    WHEN '{tipo}' THEN {factor}" for tipo, factor in HE_FACTORES.items()
+) + "\n    ELSE 1.0\nEND"
+
+# Valor pagado de una novedad de horas: horas × valor-hora × factor.
+_HE_VALOR_EXPR = f"CAST(n.dias AS REAL) * s.salario / 240.0 * ({_HE_FACTOR_CASE})"
+
 def _archivo_to_periodo(arch: str) -> Optional[str]:
     """Parsea nombres de archivo a 'YYYY-MM'.
     Soporta:
@@ -1299,19 +1321,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
             n.tipo_novedad,
             COUNT(*) AS eventos,
             COALESCE(SUM(CAST(n.dias AS REAL)), 0) AS total_horas,
-            COALESCE(SUM(
-                CAST(n.dias AS REAL) * s.salario / 240.0 *
-                CASE n.tipo_novedad
-                    WHEN 'HORAS EXTRAS DIURNAS'           THEN 1.25
-                    WHEN 'HORAS EXTRAS NOCTURNAS'         THEN 1.75
-                    WHEN 'HORAS EXTRAS DIURNAS FESTIVAS'  THEN 2.00
-                    WHEN 'HORAS EXTRAS NOCTURNAS FESTIVAS'THEN 2.50
-                    WHEN 'RECARGO FESTIVO'                THEN 0.75
-                    WHEN 'RECARGO FESTIVO NOCTURNO'       THEN 1.10
-                    WHEN 'RECARGO NOCTURNO'               THEN 0.35
-                    ELSE 1.0
-                END
-            ), 0) AS valor
+            COALESCE(SUM({_HE_VALOR_EXPR}), 0) AS valor
         FROM novedades_nomina n
         LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
         WHERE n.es_valido = 1 AND n.unidad = 'horas'
@@ -1322,11 +1332,6 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
     rows_he_v = db.execute(sql_he_valor, params_sql).fetchall()
     total_valor_he = sum(float(r.valor or 0) for r in rows_he_v)
 
-    HE_FACTORES = {
-        'HORAS EXTRAS DIURNAS': 1.25, 'HORAS EXTRAS NOCTURNAS': 1.75,
-        'HORAS EXTRAS DIURNAS FESTIVAS': 2.00, 'HORAS EXTRAS NOCTURNAS FESTIVAS': 2.50,
-        'RECARGO FESTIVO': 0.75, 'RECARGO FESTIVO NOCTURNO': 1.10, 'RECARGO NOCTURNO': 0.35,
-    }
     valor_por_tipo_he = [
         {
             "tipo": r.tipo_novedad,
@@ -1343,19 +1348,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
         SELECT
             n.cedula, n.nombre_empleado, n.area,
             COALESCE(SUM(CAST(n.dias AS REAL)), 0) AS horas,
-            COALESCE(SUM(
-                CAST(n.dias AS REAL) * s.salario / 240.0 *
-                CASE n.tipo_novedad
-                    WHEN 'HORAS EXTRAS DIURNAS'           THEN 1.25
-                    WHEN 'HORAS EXTRAS NOCTURNAS'         THEN 1.75
-                    WHEN 'HORAS EXTRAS DIURNAS FESTIVAS'  THEN 2.00
-                    WHEN 'HORAS EXTRAS NOCTURNAS FESTIVAS'THEN 2.50
-                    WHEN 'RECARGO FESTIVO'                THEN 0.75
-                    WHEN 'RECARGO FESTIVO NOCTURNO'       THEN 1.10
-                    WHEN 'RECARGO NOCTURNO'               THEN 0.35
-                    ELSE 1.0
-                END
-            ), 0) AS valor
+            COALESCE(SUM({_HE_VALOR_EXPR}), 0) AS valor
         FROM novedades_nomina n
         LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
         WHERE n.es_valido = 1 AND n.unidad = 'horas'
@@ -1405,6 +1398,78 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
             }
             for r in top_emp_rows
         ],
+    }
+
+
+def get_detalle_horas_extras_tipo(db: Session, filters: dict, tipo: str) -> dict:
+    """Detalle por empleado de UN tipo de HE/recargo (drill-down del panel).
+
+    Agrega por empleado las novedades de horas de `tipo` (respetando los mismos
+    filtros de área/sede/período del panel) y devuelve horas, eventos y valor
+    pagado, ordenado por valor descendente. Solo-lectura y parametrizado."""
+    periodo_filter = filters.get("periodo")
+    if periodo_filter:
+        try:
+            año, mes = periodo_filter.split("-")
+            arch_he = f"{mes}{año}.xlsx"
+        except (ValueError, IndexError):
+            arch_he = None
+    else:
+        arch_he = None   # sin período => todo el histórico
+
+    arch_where_sql = "AND n.archivo_origen = :arch_he" if arch_he else ""
+    area_where_sql = "AND n.area = :area_he" if filters.get("area") else ""
+    sede_where_sql = "AND n.sede = :sede_he" if filters.get("sede") else ""
+    params_sql: dict = {"tipo_he": tipo}
+    if arch_he:
+        params_sql["arch_he"] = arch_he
+    if filters.get("area"):
+        params_sql["area_he"] = filters["area"]
+    if filters.get("sede"):
+        params_sql["sede_he"] = filters["sede"]
+
+    sql_detalle = text(f"""
+        SELECT
+            n.cedula,
+            n.nombre_empleado,
+            n.area,
+            n.sede,
+            COUNT(*) AS eventos,
+            COALESCE(SUM(CAST(n.dias AS REAL)), 0) AS horas,
+            COALESCE(SUM({_HE_VALOR_EXPR}), 0) AS valor,
+            MAX(CASE WHEN s.cedula IS NULL THEN 1 ELSE 0 END) AS sin_salario
+        FROM novedades_nomina n
+        LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
+        WHERE n.es_valido = 1 AND n.unidad = 'horas'
+          AND n.tipo_novedad = :tipo_he
+          {arch_where_sql} {area_where_sql} {sede_where_sql}
+        GROUP BY n.cedula, n.nombre_empleado, n.area, n.sede
+        ORDER BY valor DESC, horas DESC
+    """)
+    rows = db.execute(sql_detalle, params_sql).fetchall()
+
+    data = [
+        {
+            "cedula": r.cedula or "—",
+            "nombre": r.nombre_empleado or "—",
+            "area": r.area or "—",
+            "sede": r.sede or "—",
+            "eventos": int(r.eventos or 0),
+            "horas": round(float(r.horas or 0), 1),
+            "valor": round(float(r.valor or 0), 0),
+            "sin_salario": bool(r.sin_salario),
+        }
+        for r in rows
+    ]
+
+    return {
+        "tipo": tipo,
+        "factor": HE_FACTORES.get(tipo, 1.0),
+        "total_empleados": len(data),
+        "total_eventos": sum(d["eventos"] for d in data),
+        "total_horas": round(sum(d["horas"] for d in data), 1),
+        "total_valor": round(sum(d["valor"] for d in data), 0),
+        "data": data,
     }
 
 

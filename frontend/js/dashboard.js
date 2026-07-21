@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initPanelTabs();
   initFilterListeners();
   initTableSorting();
+  wireHeDetalle();
   await loadFilterOptions();
   updateFilterBar('ejecutivo');
   await loadPanel('ejecutivo');
@@ -808,6 +809,7 @@ async function loadPanelHorasExtras() {
   };
   const ids = ['chart-he-tipos', 'chart-he-tendencia', 'chart-he-areas'];
   ids.forEach(showChartLoading);
+  hideHeDetalle();   // el detalle abierto queda obsoleto si cambian los filtros
   try {
     const data = await API.getPanelHorasExt(panelFilters);
 
@@ -826,7 +828,7 @@ async function loadPanelHorasExtras() {
         tbodyHe.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:12px;color:var(--muted)">Sin datos de salario disponibles</td></tr>';
       } else {
         tbodyHe.innerHTML = data.valor_por_tipo.map(t => `
-          <tr>
+          <tr class="he-tipo-row" data-tipo="${escapeHtml(t.tipo)}" style="cursor:pointer" title="Ver detalle por empleado">
             <td style="font-size:.8rem;font-weight:600">${escapeHtml(t.tipo)}</td>
             <td style="text-align:right">${formatNumber(t.horas)} h</td>
             <td style="text-align:right">${formatNumber(t.eventos)}</td>
@@ -879,6 +881,72 @@ async function loadPanelHorasExtras() {
   } finally {
     ids.forEach(hideChartLoading);
   }
+}
+
+// ── Detalle por tipo de HE/recargo (drill-down) ───────────────
+
+async function renderHeDetalle(tipo) {
+  const box   = document.getElementById('he-detalle-tipo');
+  const tbody = document.getElementById('he-detalle-tabla');
+  if (!box || !tbody) return;
+
+  // Resalta la fila seleccionada en la tabla de tipos
+  document.querySelectorAll('#he-valor-tabla .he-tipo-row').forEach(r =>
+    r.classList.toggle('he-tipo-row--activa', r.dataset.tipo === tipo));
+
+  box.style.display = '';
+  setText('he-detalle-titulo', `Detalle — ${tipo}`);
+  setText('he-detalle-sub', 'Cargando...');
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:12px;color:var(--muted)"><span class="spinner"></span> Cargando...</td></tr>';
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  try {
+    const d = await API.getDetalleHorasExtTipo({
+      tipo,
+      area:    currentFilters.area    || null,
+      sede:    currentFilters.sede    || null,
+      periodo: currentFilters.periodo || null,
+    });
+
+    setText('he-detalle-sub',
+      `${formatNumber(d.total_empleados)} empleado(s) · ${formatNumber(d.total_eventos)} evento(s) · ` +
+      `${formatNumber(d.total_horas)} h · ${formatCOP(d.total_valor)} · factor ×${d.factor}`);
+
+    if (!d.data?.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:12px;color:var(--muted)">Sin registros para este concepto</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.data.map(e => `
+      <tr>
+        <td style="font-size:.8rem" title="${escapeHtml(e.nombre)}">${escapeHtml(e.nombre)}${e.sin_salario ? ' <span title="Sin salario en base — valor estimado en 0" style="color:var(--muted)">⚠</span>' : ''}</td>
+        <td style="font-family:monospace;color:#64748b;font-size:.75rem">${escapeHtml(e.cedula)}</td>
+        <td><span class="badge badge-area" style="font-size:.7rem">${escapeHtml(e.area)}</span></td>
+        <td style="text-align:right;font-weight:600">${formatNumber(e.horas)} h</td>
+        <td style="text-align:right">${formatNumber(e.eventos)}</td>
+        <td style="text-align:right;font-weight:700;color:#991b1b">${formatCOP(e.valor)}</td>
+      </tr>`).join('');
+  } catch (err) {
+    console.error('Error detalle HE por tipo:', err);
+    setText('he-detalle-sub', 'Error al cargar el detalle');
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:12px;text-align:center">${escapeHtml(err.message || 'Error')}</td></tr>`;
+  }
+}
+
+function hideHeDetalle() {
+  const box = document.getElementById('he-detalle-tipo');
+  if (box) box.style.display = 'none';
+  document.querySelectorAll('#he-valor-tabla .he-tipo-row--activa')
+    .forEach(r => r.classList.remove('he-tipo-row--activa'));
+}
+
+function wireHeDetalle() {
+  // El listener vive en el <tbody> (elemento estable): sobrevive a los
+  // reemplazos de innerHTML que hace loadPanelHorasExtras.
+  document.getElementById('he-valor-tabla')?.addEventListener('click', (e) => {
+    const row = e.target.closest('.he-tipo-row');
+    if (row?.dataset.tipo) renderHeDetalle(row.dataset.tipo);
+  });
+  document.getElementById('he-detalle-cerrar')?.addEventListener('click', hideHeDetalle);
 }
 
 // ── Tabla de datos ────────────────────────────────────────────

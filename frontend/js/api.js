@@ -57,6 +57,7 @@ const API = {
   getPanelAusent:    (params = {}) => apiFetch('/api/dashboard/panel/ausentismo?' + new URLSearchParams(clean(params))),
   getAusentismoEmpleados: (params = {}) => apiFetch('/api/dashboard/ausentismo/empleados?' + new URLSearchParams(clean(params))),
   getPanelHorasExt:  (params = {}) => apiFetch('/api/dashboard/panel/horas-extras?' + new URLSearchParams(clean(params))),
+  getDetalleHorasExtTipo: (params = {}) => apiFetch('/api/dashboard/panel/horas-extras/detalle?' + new URLSearchParams(clean(params))),
   getEmpleados:      (params = {}) => apiFetch('/api/dashboard/empleados?'      + new URLSearchParams(clean(params))),
   getResumenPorArea: (params = {}) => apiFetch('/api/dashboard/resumen-por-area?' + new URLSearchParams(clean(params))),
 

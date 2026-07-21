@@ -689,6 +689,36 @@
     </div>
   </div>
 
+  <!-- ── Detalle por tipo (drill-down al hacer clic en una fila) ── -->
+  <div id="he-detalle-tipo" class="chart-card" style="display:none;margin-bottom:20px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+      <div>
+        <div class="chart-title" id="he-detalle-titulo">Detalle</div>
+        <div class="chart-sub" id="he-detalle-sub">Empleados con este concepto</div>
+      </div>
+      <button type="button" id="he-detalle-cerrar" class="btn-ghost"
+              style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--muted);line-height:1"
+              title="Cerrar detalle">✕</button>
+    </div>
+    <div class="data-table-wrapper" style="max-height:340px;overflow-y:auto;margin-top:10px">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Empleado</th>
+            <th>Cédula</th>
+            <th>Área</th>
+            <th style="text-align:right">Horas</th>
+            <th style="text-align:right">Eventos</th>
+            <th style="text-align:right">Valor</th>
+          </tr>
+        </thead>
+        <tbody id="he-detalle-tabla">
+          <tr><td colspan="6" style="text-align:center;padding:12px;color:var(--muted)">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="chart-grid" style="margin-bottom:16px">
     <div class="chart-card">
       <div class="chart-title">Horas por Tipo de Recargo/HE</div>
