@@ -16,7 +16,8 @@
     .modal-overlay.open { display: flex; }
     .modal-box {
       background: var(--card); border-radius: var(--radius);
-      padding: 28px 30px; width: 100%; max-width: 420px;
+      padding: 28px 30px; width: 100%; max-width: 460px;
+      max-height: 88vh; overflow-y: auto;
       box-shadow: 0 20px 60px rgba(0,0,0,.25);
     }
     .modal-box h2 { font-size: 1rem; font-weight: 700; margin: 0 0 18px; }
@@ -42,6 +43,31 @@
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
     }
+    /* ── Áreas a cargo: chips + checklist buscable ── */
+    .areas-chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+    .areas-chips:empty { display:none; }
+    .area-chip {
+      display:inline-flex; align-items:center; gap:4px;
+      background:var(--bg); color:var(--text); border:1px solid var(--border);
+      border-radius:20px; padding:3px 6px 3px 10px; font-size:.76rem; font-weight:600;
+    }
+    .area-chip button {
+      border:none; background:none; cursor:pointer; color:var(--muted);
+      font-size:1rem; line-height:1; padding:0 2px; font-family:var(--font);
+    }
+    .area-chip button:hover { color:var(--danger); }
+    .areas-list {
+      max-height:150px; overflow-y:auto; border:1.5px solid var(--border);
+      border-radius:8px; margin-top:6px; background:var(--bg);
+    }
+    .areas-list label {
+      display:flex; align-items:center; gap:8px; padding:6px 10px;
+      font-size:.82rem; font-weight:400; text-transform:none; letter-spacing:0;
+      color:var(--text); cursor:pointer; margin:0;
+    }
+    .areas-list label:hover { background:rgba(0,0,0,.04); }
+    .areas-list input[type="checkbox"] { width:auto; accent-color:var(--primary); cursor:pointer; }
+    .areas-list .areas-empty { padding:14px; text-align:center; color:var(--muted); font-size:.78rem; }
   </style>
 </head>
 <body>
@@ -133,6 +159,7 @@
             <th>Nombre completo</th>
             <th>Email</th>
             <th>Rol</th>
+            <th>Áreas a cargo</th>
             <th>Estado</th>
             <th>Último acceso</th>
             <th style="text-align:right">Acciones</th>
@@ -140,7 +167,7 @@
         </thead>
         <tbody id="table-body">
           <tr>
-            <td colspan="8" style="text-align:center;padding:60px;color:var(--muted)">
+            <td colspan="9" style="text-align:center;padding:60px;color:var(--muted)">
               <span class="spinner"></span>&nbsp; Cargando usuarios...
             </td>
           </tr>
@@ -177,6 +204,14 @@
         <option value="admin">Administrador</option>
       </select>
     </div>
+    <div class="form-field" id="field-areas">
+      <label>Áreas a cargo
+        <span style="font-weight:400;text-transform:none;letter-spacing:0">(solo ve/gestiona novedades de estas áreas)</span>
+      </label>
+      <div class="areas-chips" id="areas-chips"></div>
+      <input type="text" id="areas-search" placeholder="Buscar área..." autocomplete="off" />
+      <div class="areas-list" id="areas-list"></div>
+    </div>
     <div class="form-field" id="field-password">
       <label>Contraseña <span id="pw-hint" style="font-weight:400;text-transform:none;letter-spacing:0">(dejar vacío para no cambiar)</span></label>
       <input type="password" id="edit-password" placeholder="••••••••" autocomplete="new-password" />
@@ -198,6 +233,7 @@
 
 <div class="toast-container" id="toast-container"></div>
 
+<script src="js/escape-html.js?v=20260720a"></script>
 <script src="js/api.js?v=20260720b"></script>
 <script>
 (async () => {
@@ -213,6 +249,18 @@
   document.getElementById('user-name').textContent = user.username;
   document.getElementById('btn-logout').addEventListener('click', logout);
   document.getElementById('btn-refresh').addEventListener('click', loadUsers);
+
+  // Áreas disponibles para el multi-select "Áreas a cargo" (se cargan una
+  // vez; el admin ve todas -- filter-options no le aplica ninguna
+  // restricción a él mismo).
+  let allAreas = [];
+  let selectedAreas = new Set();
+  try {
+    const opts = await API.getFilterOpts();
+    allAreas = opts.areas || [];
+  } catch (e) {
+    console.warn('No se pudieron cargar las áreas disponibles:', e.message);
+  }
 
   // Búsqueda en tiempo real
   let allUsers = [];
@@ -233,17 +281,70 @@
 
   document.getElementById('btn-save-modal').addEventListener('click', saveUser);
 
+  // ── Áreas a cargo: chips + checklist buscable ──────────────
+  function renderAreaChips() {
+    const box = document.getElementById('areas-chips');
+    box.innerHTML = [...selectedAreas].sort().map(a => `
+      <span class="area-chip">${escapeHtml(a)}
+        <button type="button" data-area="${escapeHtml(a)}" title="Quitar área" aria-label="Quitar ${escapeHtml(a)}">✕</button>
+      </span>`).join('');
+    box.querySelectorAll('button[data-area]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedAreas.delete(btn.dataset.area);
+        renderAreaChips();
+        renderAreaChecklist(document.getElementById('areas-search').value);
+      });
+    });
+  }
+
+  function renderAreaChecklist(filterText = '') {
+    const list = document.getElementById('areas-list');
+    const q = filterText.trim().toLowerCase();
+    const items = allAreas.filter(a => a.toLowerCase().includes(q));
+    if (!items.length) {
+      list.innerHTML = '<div class="areas-empty">Sin áreas que coincidan</div>';
+      return;
+    }
+    list.innerHTML = items.map(a => `
+      <label>
+        <input type="checkbox" value="${escapeHtml(a)}" ${selectedAreas.has(a) ? 'checked' : ''} />
+        ${escapeHtml(a)}
+      </label>`).join('');
+    list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedAreas.add(cb.value); else selectedAreas.delete(cb.value);
+        renderAreaChips();
+      });
+    });
+  }
+
+  document.getElementById('areas-search').addEventListener('input', (e) => renderAreaChecklist(e.target.value));
+
+  // El rol admin no tiene restricción por área (ver auth_service.get_user_areas
+  // en el backend) -- ocultar la sección para no sugerir que aplica.
+  document.getElementById('edit-role').addEventListener('change', (e) => {
+    document.getElementById('field-areas').style.display = e.target.value === 'admin' ? 'none' : 'block';
+  });
+
   function openModal(userObj) {
     document.getElementById('modal-title').textContent = userObj ? 'Editar usuario' : 'Nuevo usuario';
     document.getElementById('edit-id').value       = userObj?.id || '';
     document.getElementById('edit-username').value = userObj?.username || '';
     document.getElementById('edit-fullname').value = userObj?.full_name || '';
     document.getElementById('edit-email').value    = userObj?.email || '';
-    document.getElementById('edit-role').value     = userObj?.role || 'readonly';
+    const role = userObj?.role || 'readonly';
+    document.getElementById('edit-role').value     = role;
     document.getElementById('edit-password').value = '';
     document.getElementById('pw-hint').style.display  = userObj ? 'inline' : 'none';
     document.getElementById('field-active').style.display = userObj ? 'block' : 'none';
     if (userObj) document.getElementById('edit-active').value = String(userObj.is_active);
+
+    selectedAreas = new Set(userObj?.areas || []);
+    document.getElementById('areas-search').value = '';
+    document.getElementById('field-areas').style.display = role === 'admin' ? 'none' : 'block';
+    renderAreaChips();
+    renderAreaChecklist();
+
     modal.classList.add('open');
   }
 
@@ -258,13 +359,22 @@
 
     if (!username) { showToast('El nombre de usuario es obligatorio', 'warning'); return; }
 
-    const body = { username, full_name: fullName, email, role };
+    if (role !== 'admin' && selectedAreas.size === 0) {
+      const seguir = confirm(
+        'No seleccionaste ninguna área para este usuario.\n\n' +
+        'Con un rol distinto a Administrador y sin áreas asignadas, no podrá ' +
+        'ver ninguna novedad en el tablero.\n\n¿Guardar de todas formas?'
+      );
+      if (!seguir) return;
+    }
+
+    const body = { username, full_name: fullName, email, role, areas: [...selectedAreas] };
     if (password) body.password = password;
     if (id) body.is_active = isActive;
 
     try {
       if (id) {
-        await apiFetch(`${API.users}/${id}`, { method: 'PUT', body: JSON.stringify(body),
+        await apiFetch(`${API.users}${id}`, { method: 'PUT', body: JSON.stringify(body),
           headers: { 'Content-Type': 'application/json' } });
         showToast('Usuario actualizado', 'success');
       } else {
@@ -297,7 +407,7 @@
     const tbody = document.getElementById('table-body');
 
     if (!list.length) {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:60px;color:var(--muted)">
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:60px;color:var(--muted)">
         <div class="empty-icon">👤</div>No se encontraron usuarios.</td></tr>`;
       return;
     }
@@ -306,6 +416,19 @@
       const [rl, rc] = roleLabel[u.role] || ['—', 'role-readonly'];
       const initials = (u.full_name || u.username || '?').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
       const lastLogin = u.last_login ? formatDate(u.last_login) : 'Nunca';
+
+      let areasCell;
+      if (u.role === 'admin') {
+        areasCell = '<span style="font-size:.76rem;color:var(--muted)">Todas</span>';
+      } else if (!u.areas || !u.areas.length) {
+        areasCell = '<span style="font-size:.76rem;color:var(--danger)" title="Sin áreas asignadas: no verá ninguna novedad">Sin áreas ⚠</span>';
+      } else {
+        const visibles = u.areas.slice(0, 2);
+        const resto = u.areas.length - visibles.length;
+        areasCell = visibles.map(a => `<span class="badge badge-area" style="font-size:.68rem;margin:1px">${escapeHtml(a)}</span>`).join(' ')
+          + (resto > 0 ? ` <span style="font-size:.7rem;color:var(--muted)" title="${escapeHtml(u.areas.join(', '))}">+${resto} más</span>` : '');
+      }
+
       return `<tr>
         <td style="color:var(--muted);font-size:.75rem">${idx + 1}</td>
         <td>
@@ -317,6 +440,7 @@
         <td style="font-size:.83rem">${u.full_name || '—'}</td>
         <td style="font-size:.8rem;color:var(--muted)">${u.email || '—'}</td>
         <td><span class="role-badge ${rc}">${rl}</span></td>
+        <td style="max-width:220px">${areasCell}</td>
         <td>
           <span class="badge ${u.is_active ? 'badge-ok' : 'badge-error'}">
             ${u.is_active ? 'Activo' : 'Inactivo'}
@@ -344,7 +468,7 @@
     const action = activate ? 'activar' : 'desactivar';
     if (!confirm(`¿${action.charAt(0).toUpperCase()+action.slice(1)} este usuario?`)) return;
     try {
-      await apiFetch(`${API.users}/${id}`, {
+      await apiFetch(`${API.users}${id}`, {
         method: 'PUT',
         body: JSON.stringify({ is_active: activate }),
         headers: { 'Content-Type': 'application/json' }
