@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Request
 from sqlalchemy.orm import Session
 from typing import List
 
+from app.config import settings
 from app.database import get_db
+from app.middleware.rate_limit import limiter
 from app.models.user import User
 from app.models.execution import ExecutionLog
 from app.services.auth_service import get_current_user, require_admin
@@ -59,7 +61,9 @@ async def get_execution(
 
 
 @router.post("/trigger", summary="Disparar proceso ETL manualmente (solo Admin)")
+@limiter.limit(settings.RATE_LIMIT_ETL_TRIGGER)
 async def trigger_etl(
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
@@ -67,6 +71,10 @@ async def trigger_etl(
     """
     Inicia el proceso ETL inmediatamente en segundo plano.
     Solo disponible para administradores.
+
+    Rate-limited (SEC-4, settings.RATE_LIMIT_ETL_TRIGGER): aunque ya es
+    admin-only, el ETL es una operación pesada; el límite evita que un script
+    o clics repetidos encolen decenas de corridas simultáneas.
     """
     def run_in_bg():
         from app.database import SessionLocal
@@ -81,10 +89,14 @@ async def trigger_etl(
 
 
 @router.post("/trigger-trazalo", summary="Sincronizar Trazalo manualmente (solo Admin)")
+@limiter.limit(settings.RATE_LIMIT_TRAZALO_TRIGGER)
 async def trigger_trazalo(
+    request: Request,
     current_user: User = Depends(require_admin),
 ):
-    """Ejecuta la sincronización con Trazalo (PostgreSQL) inmediatamente."""
+    """Ejecuta la sincronización con Trazalo (PostgreSQL) inmediatamente.
+
+    Rate-limited (SEC-4, settings.RATE_LIMIT_TRAZALO_TRIGGER)."""
     from app.database import SessionLocal
     from app.services.trazalo_sync import sync_trazalo
     db = SessionLocal()

@@ -78,6 +78,15 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # Rate limiting (SEC-4). Formato de límite: sintaxis de la librería
+    # `limits` (ej. "10/15 minutes", "5/hour"). RATE_LIMIT_ENABLED=False es
+    # la válvula de escape operativa para desactivarlo sin redeploy de código
+    # si llegara a causar problemas en producción.
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_LOGIN: str = "10/15 minutes"
+    RATE_LIMIT_ETL_TRIGGER: str = "5/hour"
+    RATE_LIMIT_TRAZALO_TRIGGER: str = "10/hour"
+
     model_config = {"env_file": ".env", "case_sensitive": True}
 
     @property
