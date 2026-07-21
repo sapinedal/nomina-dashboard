@@ -220,8 +220,28 @@ function requireAuth() {
   if (!localStorage.getItem('token')) window.location.href = 'login.html';
 }
 
-/** Cerrar sesión */
-function logout() {
+/** Cerrar sesión: revoca el token en el servidor (best-effort) y limpia la
+ *  sesión local siempre, incluso si la llamada al backend falla por red --
+ *  el usuario no debe quedar atrapado sin poder desloguearse localmente
+ *  solo porque no hay conexión. */
+async function logout() {
+  const token = localStorage.getItem('token');
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (token) {
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ refresh_token: refreshToken || undefined }),
+      });
+    } catch {
+      // Sin red: igual limpiamos la sesión local. El access_token expira
+      // solo en <=15 min; no vale la pena bloquear el logout local por esto.
+    }
+  }
   clearSession();
   window.location.href = 'login.html';
 }

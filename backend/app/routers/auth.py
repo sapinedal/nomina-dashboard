@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -10,11 +11,13 @@ from app.services.auth_service import (
     create_access_token,
     create_refresh_token,
     get_current_user,
+    oauth2_scheme,
+    revoke_token,
     role_value,
     verify_refresh_token,
 )
 from app.models.user import User
-from app.schemas.user import Token, UserResponse, AccessTokenResponse, RefreshTokenRequest
+from app.schemas.user import Token, UserResponse, AccessTokenResponse, RefreshTokenRequest, LogoutRequest
 
 router = APIRouter(prefix="/api/auth", tags=["Autenticación"])
 
@@ -72,9 +75,20 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/logout", summary="Cerrar sesión")
-async def logout():
-    """El logout limpia el token en el cliente. La revocación del lado del
-    servidor (blacklist) llega en SEC-3; hasta entonces, un access_token ya
-    emitido sigue siendo valido por hasta ACCESS_TOKEN_EXPIRE_MINUTES tras
-    el logout -- 15 min con este cambio, antes eran 480."""
+async def logout(
+    payload: Optional[LogoutRequest] = None,
+    token: str = Depends(oauth2_scheme),
+    _: User = Depends(get_current_user),
+):
+    """Revoca el access_token usado en esta llamada y, si el cliente lo
+    envía, el refresh_token asociado -- ambos dejan de servir de inmediato,
+    incluso si aún no expiraron (ver auth_service.revoke_token).
+
+    Revocar solo el access_token no bastaría: el refresh_token seguiría
+    vigente hasta REFRESH_TOKEN_EXPIRE_DAYS y podría canjearse por un
+    access_token nuevo en /api/auth/refresh, dejando el "logout" sin efecto
+    real para quien tenga ambos tokens."""
+    revoke_token(token)
+    if payload and payload.refresh_token:
+        revoke_token(payload.refresh_token)
     return {"message": "Sesión cerrada correctamente"}

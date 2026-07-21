@@ -10,6 +10,7 @@ pydantic-settings>=2.5
 python-jose[cryptography]
 passlib[bcrypt]
 bcrypt==4.0.1
+redis
 python-multipart
 pandas>=2.3
 openpyxl

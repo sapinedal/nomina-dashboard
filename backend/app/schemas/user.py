@@ -52,6 +52,12 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    """A diferencia de RefreshTokenRequest, el refresh_token es opcional
+    aquí: revocar solo el access_token ya es mejor que no revocar nada."""
+    refresh_token: Optional[str] = None
+
+
 class TokenData(BaseModel):
     username: Optional[str] = None
     role: Optional[str] = None
