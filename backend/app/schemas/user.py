@@ -34,8 +34,28 @@ class UserResponse(UserBase):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    expires_in: int  # segundos de vida del access_token
     user: UserResponse
+
+
+class AccessTokenResponse(BaseModel):
+    """Respuesta de POST /api/auth/refresh -- solo el access_token nuevo,
+    el refresh_token no rota (ver auth_service.verify_refresh_token)."""
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    """A diferencia de RefreshTokenRequest, el refresh_token es opcional
+    aquí: revocar solo el access_token ya es mejor que no revocar nada."""
+    refresh_token: Optional[str] = None
 
 
 class TokenData(BaseModel):

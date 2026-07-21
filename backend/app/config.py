@@ -31,7 +31,11 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str = _INSECURE_DEFAULT_SECRET_KEY
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    # Corto a propósito (SEC-2): si un access token se filtra, la ventana de
+    # explotación es de minutos, no horas. El frontend renueva la sesión de
+    # forma transparente vía REFRESH_TOKEN_EXPIRE_DAYS (ver /api/auth/refresh).
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Contraseña del admin sembrado en el PRIMER arranque (BD sin usuario admin).
     # Solo se usa al crear el admin; nunca sobrescribe la contraseña de un admin
@@ -73,6 +77,15 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Rate limiting (SEC-4). Formato de límite: sintaxis de la librería
+    # `limits` (ej. "10/15 minutes", "5/hour"). RATE_LIMIT_ENABLED=False es
+    # la válvula de escape operativa para desactivarlo sin redeploy de código
+    # si llegara a causar problemas en producción.
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_LOGIN: str = "10/15 minutes"
+    RATE_LIMIT_ETL_TRIGGER: str = "5/hour"
+    RATE_LIMIT_TRAZALO_TRIGGER: str = "10/hour"
 
     model_config = {"env_file": ".env", "case_sensitive": True}
 

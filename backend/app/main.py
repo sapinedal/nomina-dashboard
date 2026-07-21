@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
 import os
 
 from app.config import settings
@@ -13,6 +14,7 @@ from app.database import create_tables
 from app.utils.logger import setup_logging, get_logger
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.auth_service import hash_password
+from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
 from app.routers import auth, dashboard, execution, users, export
 
 logger = get_logger(__name__)
@@ -85,6 +87,11 @@ Sistema de tableros estadísticos para Novedades de Nómina.
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+
+# Rate limiting (SEC-4): el objeto limiter debe vivir en app.state para que
+# los decoradores @limiter.limit(...) de los routers lo encuentren.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # CORS
 app.add_middleware(
