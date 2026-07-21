@@ -19,6 +19,7 @@ apscheduler
 python-dotenv
 httpx
 structlog
+slowapi
 python-dateutil
 xlsxwriter
 reportlab

@@ -1,11 +1,12 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime
 
 from app.config import settings
 from app.database import get_db
+from app.middleware.rate_limit import limiter
 from app.services.auth_service import (
     authenticate_user,
     create_access_token,
@@ -27,12 +28,18 @@ def _access_token_ttl_seconds() -> int:
 
 
 @router.post("/token", response_model=Token, summary="Iniciar sesión")
+@limiter.limit(settings.RATE_LIMIT_LOGIN)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
     """Autenticar usuario y obtener access_token (corto) + refresh_token
-    (largo, ver settings.REFRESH_TOKEN_EXPIRE_DAYS)."""
+    (largo, ver settings.REFRESH_TOKEN_EXPIRE_DAYS).
+
+    Rate-limited (SEC-4, settings.RATE_LIMIT_LOGIN) contra fuerza bruta y
+    credential stuffing. El límite cuenta CADA intento, exitoso o no, por IP
+    real del cliente (ver middleware.rate_limit.client_ip)."""
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
