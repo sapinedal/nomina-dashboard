@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import redis
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -10,9 +11,18 @@ from app.config import settings
 from app.models.user import User
 from app.database import get_db
 from app.schemas.user import TokenData
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+
+# from_url() no conecta de inmediato (lazy): si Redis no esta disponible al
+# arrancar la app, esto NO falla el startup -- el primer error real ocurre
+# recien en el primer comando (revoke_token / _is_blacklisted), donde ya
+# esta cubierto por fail-open. Ver docstrings de esas dos funciones.
+_redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
@@ -57,6 +67,49 @@ def create_refresh_token(data: dict) -> str:
     )
 
 
+def revoke_token(token: str) -> None:
+    """Agrega un token (access o refresh) a la blacklist de Redis hasta que
+    expire por su cuenta -- después de esto, get_current_user y
+    verify_refresh_token lo rechazan aunque la firma y el "exp" sigan siendo
+    válidos.
+
+    Fail-open: si Redis no responde, se registra un warning y la función
+    retorna sin lanzar. El logout local (limpiar el token en el cliente)
+    sigue funcionando igual; lo único que se pierde en ese escenario es la
+    revocación del lado del servidor -- el token seguiría siendo válido
+    hasta su propia expiración (máximo 15 min para un access_token). Se
+    prefiere esto a fail-closed: Redis nunca ha sido una dependencia dura
+    de esta app, y una caída de Redis no debe tumbar el dashboard completo
+    de nómina por una función de seguridad auxiliar.
+    """
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except JWTError:
+        return  # token ilegible o ya vencido: nada que revocar, ya es invalido por si solo
+
+    exp = payload.get("exp")
+    if not exp:
+        return
+    ttl_seconds = int(exp - datetime.now(timezone.utc).timestamp())
+    if ttl_seconds <= 0:
+        return
+
+    try:
+        _redis_client.setex(f"blacklist:{token}", ttl_seconds, "1")
+    except redis.RedisError as e:
+        logger.warning("token_revocation_failed", error=str(e))
+
+
+def _is_blacklisted(token: str) -> bool:
+    """Fail-open: si Redis no responde, trata el token como no revocado
+    (ver revoke_token para la justificación de esta decisión)."""
+    try:
+        return _redis_client.exists(f"blacklist:{token}") == 1
+    except redis.RedisError as e:
+        logger.warning("blacklist_check_failed", error=str(e))
+        return False
+
+
 def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
     user = db.query(User).filter(User.username == username, User.is_active == True).first()
     if not user or not verify_password(password, user.hashed_password):
@@ -86,6 +139,9 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
+    if _is_blacklisted(token):
+        raise credentials_exception
+
     user = db.query(User).filter(User.username == token_data.username).first()
     if user is None or not user.is_active:
         raise credentials_exception
@@ -96,10 +152,8 @@ def verify_refresh_token(db: Session, refresh_token: str) -> User:
     """Valida un refresh token y devuelve el usuario asociado.
 
     Lanza 401 si el token es invalido, expirado, no es de tipo "refresh",
-    o el usuario ya no existe o esta inactivo. No rota ni revoca el refresh
-    token (esa infraestructura -- blacklist de Redis -- llega en SEC-3);
-    por ahora un refresh token filtrado sigue siendo valido hasta que expira
-    (REFRESH_TOKEN_EXPIRE_DAYS), igual que ya documentaba el pentest.
+    fue revocado (logout, ver revoke_token), o el usuario ya no existe o
+    esta inactivo.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -113,6 +167,9 @@ def verify_refresh_token(db: Session, refresh_token: str) -> User:
         if username is None:
             raise credentials_exception
     except JWTError:
+        raise credentials_exception
+
+    if _is_blacklisted(refresh_token):
         raise credentials_exception
 
     user = db.query(User).filter(User.username == username, User.is_active == True).first()
