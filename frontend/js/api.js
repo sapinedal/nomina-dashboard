@@ -5,6 +5,93 @@
 
 const API_BASE = window.location.origin;
 
+// ── Sesión: access_token corto (15 min) + refresh_token (7 días) ──────
+// El access_token se renueva solo, de dos formas:
+//  1. Proactiva: un timer programado ~60s antes de que expire (scheduleTokenRefresh).
+//     Se rearma en cada carga de página porque un timer de JS no sobrevive un reload.
+//  2. Reactiva (red de seguridad): si igual llega un 401 -- ej. la pestaña
+//     estuvo dormida y el timer nunca corrió -- apiFetch intenta refrescar
+//     una vez antes de desloguear.
+// refreshInFlight comparte una única promesa entre requests concurrentes:
+// si el dashboard dispara 10 llamadas a la vez y todas reciben 401 juntas,
+// las 10 esperan el MISMO refresh en vez de disparar 10 por separado.
+const TOKEN_REFRESH_MARGIN_SECONDS = 60;
+let refreshTimer = null;
+let refreshInFlight = null;
+
+function storeSession({ access_token, refresh_token, expires_in }) {
+  localStorage.setItem('token', access_token);
+  if (refresh_token) localStorage.setItem('refresh_token', refresh_token);
+  localStorage.setItem('token_expires_at', String(Date.now() + expires_in * 1000));
+  scheduleTokenRefresh();
+}
+
+function clearSession() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('refresh_token');
+  localStorage.removeItem('token_expires_at');
+  localStorage.removeItem('user');
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
+function scheduleTokenRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  const expiresAt = parseInt(localStorage.getItem('token_expires_at') || '0', 10);
+  if (!expiresAt) return;
+  const msUntilRefresh = Math.max(
+    (expiresAt - Date.now()) - TOKEN_REFRESH_MARGIN_SECONDS * 1000,
+    5000, // piso de 5s: evita refrescos en loop si el reloj del sistema está mal
+  );
+  refreshTimer = setTimeout(() => { refreshAccessToken().catch(() => {}); }, msUntilRefresh);
+}
+
+/** Canjea el refresh_token guardado por un access_token nuevo.
+ *  Si falla (refresh_token vencido/inválido/ausente), limpia la sesión y
+ *  redirige a login -- por eso los llamadores no necesitan manejar ese caso. */
+function refreshAccessToken() {
+  if (refreshInFlight) return refreshInFlight;
+
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (!refreshToken) {
+    clearSession();
+    window.location.href = 'login.html';
+    return Promise.reject(new Error('Sin refresh token'));
+  }
+
+  refreshInFlight = fetch(`${API_BASE}/api/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  })
+    .then(res => {
+      if (!res.ok) throw new Error('refresh_failed');
+      return res.json();
+    })
+    .then(data => {
+      localStorage.setItem('token', data.access_token);
+      localStorage.setItem('token_expires_at', String(Date.now() + data.expires_in * 1000));
+      scheduleTokenRefresh();
+      return data.access_token;
+    })
+    .catch(err => {
+      clearSession();
+      window.location.href = 'login.html';
+      throw err;
+    })
+    .finally(() => { refreshInFlight = null; });
+
+  return refreshInFlight;
+}
+
+// Un timer de JS no sobrevive un reload de página: si ya hay sesión al
+// cargar este script, rearmarlo con el tiempo restante real.
+if (localStorage.getItem('token') && localStorage.getItem('refresh_token')) {
+  scheduleTokenRefresh();
+}
+
 async function apiFetch(endpoint, options = {}) {
   const token = localStorage.getItem('token');
   const headers = {
@@ -13,11 +100,22 @@ async function apiFetch(endpoint, options = {}) {
     ...(options.headers || {}),
   };
 
-  const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+  let res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+
+  if (res.status === 401 && localStorage.getItem('refresh_token')) {
+    try {
+      const newToken = await refreshAccessToken();
+      res = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers: { ...headers, Authorization: `Bearer ${newToken}` },
+      });
+    } catch {
+      return; // refreshAccessToken ya limpió la sesión y redirigió a login
+    }
+  }
 
   if (res.status === 401) {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    clearSession();
     window.location.href = 'login.html';
     return;
   }
@@ -124,8 +222,7 @@ function requireAuth() {
 
 /** Cerrar sesión */
 function logout() {
-  localStorage.removeItem('token');
-  localStorage.removeItem('user');
+  clearSession();
   window.location.href = 'login.html';
 }
 
