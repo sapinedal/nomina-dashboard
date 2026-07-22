@@ -38,6 +38,21 @@ def role_value(user: User) -> str:
     return user.role.value if hasattr(user.role, "value") else str(user.role)
 
 
+def get_user_areas(user: User) -> Optional[list[str]]:
+    """Áreas a las que el usuario tiene acceso, para aplicar en cada consulta
+    del dashboard. `None` es el centinela "sin restricción" (admin) -- una
+    lista vacía significa "restringido, pero sin ninguna área asignada", que
+    debe fallar cerrado (no ver nada), no abrir el acceso a todo.
+
+    Se lee siempre desde `user.areas` (fresco de BD -- ver get_current_user,
+    que resuelve el usuario en cada request), nunca desde el JWT: así un
+    cambio de áreas hecho por un admin aplica en la siguiente petición del
+    usuario afectado, sin esperar a que expire su token."""
+    if role_value(user) == "admin":
+        return None
+    return user.areas
+
+
 def _create_token(data: dict, expires_delta: timedelta, token_type: str) -> str:
     to_encode = data.copy()
     to_encode["exp"] = datetime.now(timezone.utc) + expires_delta

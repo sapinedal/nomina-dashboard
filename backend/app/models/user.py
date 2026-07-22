@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import enum
 from app.database import Base, _is_sqlite
 
@@ -29,3 +30,40 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
+
+    area_assignments = relationship("UserArea", cascade="all, delete-orphan", back_populates="user")
+
+    @property
+    def areas(self) -> list[str]:
+        """Nombres de área planos, para que UserResponse (Pydantic,
+        from_attributes=True) los tome directo sin serializar objetos
+        UserArea. La relación ORM real es `area_assignments`."""
+        return [ua.area for ua in self.area_assignments]
+
+
+class UserArea(Base):
+    """Autorización por área: qué áreas puede ver/gestionar un usuario no-admin.
+
+    `area` es texto libre (mismo valor que novedades_nomina.area) -- no existe
+    un catálogo normalizado de áreas en este sistema, así que no se agrega uno
+    solo para esto (el resto de la app ya trata las áreas como valores
+    dinámicos derivados de los datos, ver dashboard_service.get_filter_options).
+
+    Sin columna `active`: eliminar un área asignada es un DELETE real, no un
+    soft-delete -- no hay necesidad de conservar el historial de remociones a
+    nivel de fila (eso es responsabilidad de audit_logs si se necesita).
+    """
+    __tablename__ = "user_areas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    area = Column(String(200), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_by = Column(String(50), nullable=True)
+
+    user = relationship("User", back_populates="area_assignments")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "area", name="uq_user_areas_user_area"),
+        Index("ix_user_areas_area", "area"),
+    )

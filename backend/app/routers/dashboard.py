@@ -5,7 +5,7 @@ from datetime import date
 
 from app.database import get_db
 from app.models.user import User
-from app.services.auth_service import get_current_user
+from app.services.auth_service import get_current_user, get_user_areas
 from app.services import dashboard_service as svc
 from app.schemas.dashboard import KPIResponse, ChartResponse, PaginatedTable, DashboardResponse, AlertsResponse, EmpleadosListaResponse
 
@@ -20,6 +20,7 @@ def _build_filters(
     tipo_novedad: Optional[str],
     periodo: Optional[str],
     cedula: Optional[str],
+    current_user: User,
 ) -> dict:
     return {
         "fecha_inicio": fecha_inicio,
@@ -29,6 +30,11 @@ def _build_filters(
         "tipo_novedad": tipo_novedad,
         "periodo": periodo,
         "cedula": cedula,
+        # Autorización por área: SIEMPRE calculada server-side desde el usuario
+        # autenticado (nunca desde un parámetro de query) -- ver
+        # dashboard_service._effective_areas, que la cruza con el filtro de
+        # área elegido en el frontend. None = admin/sin restricción.
+        "_allowed_areas": get_user_areas(current_user),
     }
 
 
@@ -42,9 +48,9 @@ async def get_kpis(
     periodo: Optional[str] = Query(None, example="2025-01"),
     cedula: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, periodo, cedula)
+    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, periodo, cedula, current_user)
     return svc.get_kpis(db, filters)
 
 
@@ -57,9 +63,9 @@ async def chart_por_tipo(
     periodo: Optional[str] = Query(None),
     top_n: int = Query(10, ge=3, le=30),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, None, periodo, None)
+    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, None, periodo, None, current_user)
     return svc.get_novedades_por_tipo(db, filters, top_n)
 
 
@@ -72,9 +78,9 @@ async def chart_por_area(
     periodo: Optional[str] = Query(None),
     top_n: int = Query(10, ge=3, le=30),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, None, sede, tipo_novedad, periodo, None)
+    filters = _build_filters(fecha_inicio, fecha_fin, None, sede, tipo_novedad, periodo, None, current_user)
     return svc.get_novedades_por_area(db, filters, top_n)
 
 
@@ -86,9 +92,9 @@ async def chart_tendencia(
     sede: Optional[str] = Query(None),
     tipo_novedad: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, None, None)
+    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, None, None, current_user)
     return svc.get_tendencia_mensual(db, filters)
 
 
@@ -101,9 +107,9 @@ async def chart_valor_area(
     periodo: Optional[str] = Query(None),
     top_n: int = Query(10, ge=3, le=30),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, None, sede, tipo_novedad, periodo, None)
+    filters = _build_filters(fecha_inicio, fecha_fin, None, sede, tipo_novedad, periodo, None, current_user)
     return svc.get_valor_por_area(db, filters, top_n)
 
 
@@ -122,9 +128,9 @@ async def get_table(
     sort_by: str = Query("id"),
     sort_dir: str = Query("desc"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, periodo, cedula)
+    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, periodo, cedula, current_user)
     filters["solo_activos"] = solo_activos
     return svc.get_table_data(db, filters, page, page_size, sort_by, sort_dir)
 
@@ -137,9 +143,9 @@ async def chart_valor_categoria(
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, None, periodo, None)
+    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, None, periodo, None, current_user)
     return svc.get_valor_por_categoria(db, filters)
 
 
@@ -148,9 +154,9 @@ async def filter_options(
     panel: Optional[str] = Query(None, description="ausentismo | horas-extras | None (todas las novedades)"),
     periodo: Optional[str] = Query(None, description="Acota áreas/sedes al período (solo aplica junto con panel=ausentismo u horas-extras)"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    return svc.get_filter_options(db, panel, periodo)
+    return svc.get_filter_options(db, panel, periodo, allowed_areas=get_user_areas(current_user))
 
 
 @router.get("/alerts", response_model=AlertsResponse, summary="Motor de alertas y validación")
@@ -159,9 +165,9 @@ async def get_alerts(
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = {"area": area, "sede": sede, "periodo": periodo}
+    filters = {"area": area, "sede": sede, "periodo": periodo, "_allowed_areas": get_user_areas(current_user)}
     return svc.get_alerts(db, filters)
 
 
@@ -171,9 +177,9 @@ async def get_alerts_detalle(
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = {"area": area, "sede": sede, "periodo": periodo}
+    filters = {"area": area, "sede": sede, "periodo": periodo, "_allowed_areas": get_user_areas(current_user)}
     return svc.get_alerts_detalle(db, filters)
 
 
@@ -183,9 +189,9 @@ async def panel_ausentismo(
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = {"area": area, "sede": sede, "periodo": periodo}
+    filters = {"area": area, "sede": sede, "periodo": periodo, "_allowed_areas": get_user_areas(current_user)}
     return svc.get_panel_ausentismo(db, filters)
 
 
@@ -197,9 +203,9 @@ async def resumen_por_area(
     sede:         Optional[str]  = Query(None),
     periodo:      Optional[str]  = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, None, periodo, None)
+    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, None, periodo, None, current_user)
     return svc.get_resumen_por_area(db, filters)
 
 
@@ -213,9 +219,9 @@ async def get_empleados(
     periodo: Optional[str] = Query(None),
     estado: str = Query("todos", description="todos | activo | inactivo"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, periodo, None)
+    filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, periodo, None, current_user)
     return svc.get_empleados_lista(db, filters, estado)
 
 
@@ -234,9 +240,9 @@ async def panel_horas_extras(
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = {"area": area, "sede": sede, "periodo": periodo}
+    filters = {"area": area, "sede": sede, "periodo": periodo, "_allowed_areas": get_user_areas(current_user)}
     return svc.get_panel_horas_extras(db, filters)
 
 
@@ -247,9 +253,9 @@ async def panel_horas_extras_detalle(
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = {"area": area, "sede": sede, "periodo": periodo}
+    filters = {"area": area, "sede": sede, "periodo": periodo, "_allowed_areas": get_user_areas(current_user)}
     return svc.get_detalle_horas_extras_tipo(db, filters, tipo)
 
 
@@ -259,7 +265,7 @@ async def empleados_ausentismo(
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    filters = {"area": area, "sede": sede, "periodo": periodo}
+    filters = {"area": area, "sede": sede, "periodo": periodo, "_allowed_areas": get_user_areas(current_user)}
     return svc.get_empleados_ausentismo(db, filters)
