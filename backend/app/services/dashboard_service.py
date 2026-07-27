@@ -21,9 +21,15 @@ _MESES_ES = {
     'ABRI': '04',   # nombre truncado en algunos archivos
 }
 
-# ── Factores de recargo/HE (fuente única de verdad) ───────────────
-# Multiplicador legal aplicado sobre el valor-hora (salario / 240) por tipo.
-# Los tipos no listados (PERMISO, DISPONIBILIDAD, CITA MÉDICA, etc.) usan 1.0.
+# ── Criterios compartidos Ejecutivo ↔ Ausentismo ↔ H. Extras ──────────────
+# Deben ser idénticos en get_kpis / get_panel_ausentismo / get_panel_horas_extras.
+TIPOS_AUSENTISMO_ILIKE = [
+    '%incapaci%', '%licencia%', '%ausencia%', '%permiso%',
+    '%maternidad%', '%paternidad%', '%calamidad%', '%luto%', '%accidente%',
+]
+
+# Multiplicador legal sobre valor-hora (salario / 240). Tipos fuera de este mapa
+# (PERMISO, DISPONIBILIDAD, CITA MÉDICA, etc.) NO son HE/recargo → factor 0.
 HE_FACTORES: dict[str, float] = {
     'HORAS EXTRAS DIURNAS': 1.25,
     'HORAS EXTRAS NOCTURNAS': 1.75,
@@ -34,14 +40,22 @@ HE_FACTORES: dict[str, float] = {
     'RECARGO NOCTURNO': 0.35,
 }
 
-# Expresión SQL del factor por tipo, derivada de HE_FACTORES para no repetir el
-# CASE en cada consulta. Alias de la novedad = 'n'. ELSE 1.0 para el resto.
 _HE_FACTOR_CASE = "CASE n.tipo_novedad\n" + "\n".join(
     f"    WHEN '{tipo}' THEN {factor}" for tipo, factor in HE_FACTORES.items()
-) + "\n    ELSE 1.0\nEND"
+) + "\n    ELSE 0.0\nEND"
 
-# Valor pagado de una novedad de horas: horas × valor-hora × factor.
 _HE_VALOR_EXPR = f"CAST(n.dias AS REAL) * s.salario / 240.0 * ({_HE_FACTOR_CASE})"
+_HE_TIPOS_SQL = "(" + ", ".join(f"'{t}'" for t in HE_FACTORES) + ")"
+
+
+def _orm_aus_tipo_filter():
+    from sqlalchemy import or_
+    return or_(*[NovedadNomina.tipo_novedad.ilike(t) for t in TIPOS_AUSENTISMO_ILIKE])
+
+
+def _sql_aus_tipo_predicate(alias: str = "n") -> str:
+    parts = [f"LOWER({alias}.tipo_novedad) LIKE '{p}'" for p in TIPOS_AUSENTISMO_ILIKE]
+    return "(" + " OR ".join(parts) + ")"
 
 def _archivo_to_periodo(arch: str) -> Optional[str]:
     """Parsea nombres de archivo a 'YYYY-MM'.
@@ -356,25 +370,27 @@ def get_kpis(db: Session, filters: dict) -> KPIResponse:
         func.count(distinct(NovedadNomina.periodo))
     ).scalar() or 0
 
-    # HE y ausentismo para KPIs del panel ejecutivo
+    # HE y ausentismo para KPIs (mismos criterios que paneles especializados)
     total_he = base.filter(
-        NovedadNomina.unidad == 'horas'
+        NovedadNomina.unidad == 'horas',
+        NovedadNomina.tipo_novedad.in_(list(HE_FACTORES.keys())),
     ).with_entities(
         func.coalesce(func.sum(cast(NovedadNomina.dias, Float)), 0.0)
     ).scalar() or 0.0
 
     total_aus = base.filter(
         NovedadNomina.unidad == 'dias',
-        NovedadNomina.tipo_novedad.ilike('%incapaci%') |
-        NovedadNomina.tipo_novedad.ilike('%licencia%') |
-        NovedadNomina.tipo_novedad.ilike('%ausencia%')
+        _orm_aus_tipo_filter(),
     ).with_entities(
         func.coalesce(func.sum(cast(NovedadNomina.dias, Float)), 0.0)
     ).scalar() or 0.0
 
-    # Empleados con HE > 48h en el archivo del período (suma de HE por cédula > 48)
+    # Empleados con HE > 48h (solo tipos HE/recargo reales)
     he_limite = (
-        base.filter(NovedadNomina.unidad == 'horas')
+        base.filter(
+            NovedadNomina.unidad == 'horas',
+            NovedadNomina.tipo_novedad.in_(list(HE_FACTORES.keys())),
+        )
         .group_by(NovedadNomina.cedula)
         .having(func.sum(cast(NovedadNomina.dias, Float)) > 48)
         .with_entities(NovedadNomina.cedula)
@@ -393,38 +409,28 @@ def get_kpis(db: Session, filters: dict) -> KPIResponse:
     if filters.get("sede"):
         params_val["sede_val"] = filters["sede"]
 
-    # Valor monetario de HE y recargos (se calcula primero porque suma al total nómina)
+    # Valor HE/recargos (misma expresión y tipos que get_panel_horas_extras)
     sql_valor_he = text(f"""
-        SELECT COALESCE(SUM(
-            CAST(n.dias AS REAL) * s.salario / 240.0 *
-            CASE n.tipo_novedad
-                WHEN 'HORAS EXTRAS DIURNAS'            THEN 1.25
-                WHEN 'HORAS EXTRAS NOCTURNAS'          THEN 1.75
-                WHEN 'HORAS EXTRAS DIURNAS FESTIVAS'   THEN 2.00
-                WHEN 'HORAS EXTRAS NOCTURNAS FESTIVAS' THEN 2.50
-                WHEN 'RECARGO FESTIVO'                 THEN 0.75
-                WHEN 'RECARGO FESTIVO NOCTURNO'        THEN 1.10
-                WHEN 'RECARGO NOCTURNO'                THEN 0.35
-                ELSE 0.0
-            END
-        ), 0) as v
+        SELECT COALESCE(SUM({_HE_VALOR_EXPR}), 0) as v
         FROM novedades_nomina n
         LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
         WHERE n.es_valido = 1 AND n.unidad = 'horas'
+          AND n.tipo_novedad IN {_HE_TIPOS_SQL}
           {arch_val_where} {area_val_where} {sede_val_where}
     """)
     valor_horas_extras = float(db.execute(sql_valor_he, params_val).scalar() or 0.0)
 
+    # Valor ausentismo: mismos tipos + regla "permiso no rem" = 0 que el panel
     sql_valor_aus = text(f"""
         SELECT COALESCE(SUM(
-            CAST(n.dias AS REAL) * s.salario / 30.0
+            CASE WHEN LOWER(n.tipo_novedad) LIKE '%permiso no rem%' THEN 0.0
+                 ELSE CAST(n.dias AS REAL) * s.salario / 30.0
+            END
         ), 0) as v
         FROM novedades_nomina n
         LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
         WHERE n.es_valido = 1 AND n.unidad = 'dias'
-          AND (LOWER(n.tipo_novedad) LIKE '%incapaci%'
-               OR LOWER(n.tipo_novedad) LIKE '%licencia%'
-               OR LOWER(n.tipo_novedad) LIKE '%ausencia%')
+          AND {_sql_aus_tipo_predicate("n")}
           {arch_val_where} {area_val_where} {sede_val_where}
     """)
     valor_ausencias = float(db.execute(sql_valor_aus, params_val).scalar() or 0.0)
@@ -789,6 +795,7 @@ def get_alerts(db: Session, filters: dict) -> AlertsResponse:
         base_all.filter(
             NovedadNomina.es_valido == 1,
             NovedadNomina.unidad == 'horas',
+            NovedadNomina.tipo_novedad.in_(list(HE_FACTORES.keys())),
             NovedadNomina.cedula.isnot(None),
         )
         .with_entities(
@@ -989,20 +996,10 @@ def _panel_filters_sql(filters: dict, alias: str = "n", full: bool = False) -> t
 
 
 # SQL compartido para calcular el valor de cada novedad según su tipo
-_VALOR_CALC_EXPR = """
+_VALOR_CALC_EXPR = f"""
     CASE
-        WHEN n.unidad = 'horas' THEN
-            CAST(n.dias AS REAL) * s.salario / 240.0 *
-            CASE n.tipo_novedad
-                WHEN 'HORAS EXTRAS DIURNAS'            THEN 1.25
-                WHEN 'HORAS EXTRAS NOCTURNAS'          THEN 1.75
-                WHEN 'HORAS EXTRAS DIURNAS FESTIVAS'   THEN 2.00
-                WHEN 'HORAS EXTRAS NOCTURNAS FESTIVAS' THEN 2.50
-                WHEN 'RECARGO FESTIVO'                 THEN 0.75
-                WHEN 'RECARGO FESTIVO NOCTURNO'        THEN 1.10
-                WHEN 'RECARGO NOCTURNO'                THEN 0.35
-                ELSE 1.0
-            END
+        WHEN n.unidad = 'horas' AND n.tipo_novedad IN {_HE_TIPOS_SQL} THEN
+            {_HE_VALOR_EXPR}
         WHEN LOWER(n.tipo_novedad) LIKE '%permiso no rem%' THEN 0.0
         WHEN n.tipo_novedad IN ('OTRO NO ESPEC *','Fecha ingreso','PLAN BENEFICIOS BIENESTAR LABORAL','SANCIONADO') THEN 0.0
         WHEN n.tipo_novedad LIKE 'RODAMIENTO%' THEN CAST(n.dias AS REAL)
@@ -1012,9 +1009,9 @@ _VALOR_CALC_EXPR = """
 """
 
 # Expresión de categoría para cada novedad
-_CATEGORIA_EXPR = """
+_CATEGORIA_EXPR = f"""
     CASE
-        WHEN n.unidad = 'horas'                                                                  THEN 'H. Extras & Recargos'
+        WHEN n.unidad = 'horas' AND n.tipo_novedad IN {_HE_TIPOS_SQL}                          THEN 'H. Extras & Recargos'
         WHEN LOWER(n.tipo_novedad) LIKE '%incapaci%' OR LOWER(n.tipo_novedad) LIKE '%accidente%' THEN 'Incapacidades'
         WHEN LOWER(n.tipo_novedad) LIKE '%licencia%' OR LOWER(n.tipo_novedad) LIKE '%luto%'
           OR LOWER(n.tipo_novedad) LIKE '%calamidad%'
@@ -1037,7 +1034,6 @@ def get_panel_ausentismo(db: Session, filters: dict) -> dict:
     mes distinto al del archivo donde están archivados (ej. una incapacidad
     reportada en 032026.xlsx con fecha_inicio en diciembre). Con período
     seleccionado se muestra ese mes; sin período, todo el histórico."""
-    tipos_aus = ['%incapaci%', '%licencia%', '%ausencia%', '%permiso%', '%maternidad%', '%paternidad%', '%calamidad%', '%luto%', '%accidente%']
     periodo_filter = filters.get("periodo")
     if periodo_filter:
         año, mes = periodo_filter.split("-")
@@ -1052,12 +1048,11 @@ def get_panel_ausentismo(db: Session, filters: dict) -> dict:
     if filters.get("sede"):
         aus_filter = aus_filter.filter(NovedadNomina.sede == filters["sede"])
 
-    from sqlalchemy import or_
     # unidad='dias': evita sumar como "días perdidos" novedades cuyo campo `dias`
     # en realidad contiene HORAS (ej. PERMISO/CITA MÉDICA de Trazalo, que se
     # capturan por horas parciales de jornada, no por días completos).
     aus_base = aus_filter.filter(
-        or_(*[NovedadNomina.tipo_novedad.ilike(t) for t in tipos_aus]),
+        _orm_aus_tipo_filter(),
         NovedadNomina.unidad == 'dias',
     )
 
@@ -1119,13 +1114,7 @@ def get_panel_ausentismo(db: Session, filters: dict) -> dict:
     if filters.get("sede"):
         params["sede_aus"] = filters["sede"]
     extra_where = f"{arch_where_aus} {area_where_aus} {sede_where_aus}"
-    AUS_PATTERN = (
-        "LOWER(n.tipo_novedad) LIKE '%incapaci%' OR LOWER(n.tipo_novedad) LIKE '%licencia%' "
-        "OR LOWER(n.tipo_novedad) LIKE '%ausencia%' OR LOWER(n.tipo_novedad) LIKE '%permiso%' "
-        "OR LOWER(n.tipo_novedad) LIKE '%maternidad%' OR LOWER(n.tipo_novedad) LIKE '%paternidad%' "
-        "OR LOWER(n.tipo_novedad) LIKE '%calamidad%' OR LOWER(n.tipo_novedad) LIKE '%luto%' "
-        "OR LOWER(n.tipo_novedad) LIKE '%accidente%'"
-    )
+    AUS_PATTERN = _sql_aus_tipo_predicate("n").strip("()")
     sql_sin_salario_aus = text(f"""
         SELECT COUNT(DISTINCT n.cedula) FROM novedades_nomina n
         WHERE n.es_valido = 1 AND n.unidad = 'dias' AND n.cedula IS NOT NULL
@@ -1242,6 +1231,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
     he_filter = db.query(NovedadNomina).filter(
         NovedadNomina.es_valido == 1,
         NovedadNomina.unidad == 'horas',
+        NovedadNomina.tipo_novedad.in_(list(HE_FACTORES.keys())),
     )
     if arch_he:
         he_filter = he_filter.filter(NovedadNomina.archivo_origen == arch_he)
@@ -1315,6 +1305,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
             SUM(CAST(n.dias AS REAL)) AS horas
         FROM novedades_nomina n
         WHERE n.es_valido = 1 AND n.unidad = 'horas'
+          AND n.tipo_novedad IN {_HE_TIPOS_SQL}
           AND {glob_cond}
           {tend_area_where} {tend_sede_where}
         GROUP BY SUBSTR(n.archivo_origen, 3, 4) || '-' || SUBSTR(n.archivo_origen, 1, 2)
@@ -1345,6 +1336,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
     sql_sin_salario_he = text(f"""
         SELECT COUNT(DISTINCT n.cedula) FROM novedades_nomina n
         WHERE n.es_valido = 1 AND n.unidad = 'horas' AND n.cedula IS NOT NULL
+          AND n.tipo_novedad IN {_HE_TIPOS_SQL}
           {arch_where_sql} {area_where_sql} {sede_where_sql}
           AND NOT EXISTS (SELECT 1 FROM salarios_empleados s WHERE s.cedula = n.cedula)
     """)
@@ -1359,6 +1351,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
         FROM novedades_nomina n
         LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
         WHERE n.es_valido = 1 AND n.unidad = 'horas'
+          AND n.tipo_novedad IN {_HE_TIPOS_SQL}
           {arch_where_sql} {area_where_sql} {sede_where_sql}
         GROUP BY n.tipo_novedad
         ORDER BY total_horas DESC
@@ -1372,7 +1365,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
             "eventos": int(r.eventos),
             "horas": round(float(r.total_horas or 0), 1),
             "valor": round(float(r.valor or 0), 0),
-            "factor": HE_FACTORES.get(r.tipo_novedad, 1.0),
+            "factor": HE_FACTORES.get(r.tipo_novedad, 0.0),
         }
         for r in rows_he_v
     ]
@@ -1386,6 +1379,7 @@ def get_panel_horas_extras(db: Session, filters: dict) -> dict:
         FROM novedades_nomina n
         LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
         WHERE n.es_valido = 1 AND n.unidad = 'horas'
+          AND n.tipo_novedad IN {_HE_TIPOS_SQL}
           AND n.cedula IS NOT NULL AND n.nombre_empleado IS NOT NULL
           {arch_where_sql} {area_where_sql} {sede_where_sql}
         GROUP BY n.cedula, n.nombre_empleado, n.area
@@ -1496,7 +1490,7 @@ def get_detalle_horas_extras_tipo(db: Session, filters: dict, tipo: str) -> dict
 
     return {
         "tipo": tipo,
-        "factor": HE_FACTORES.get(tipo, 1.0),
+        "factor": HE_FACTORES.get(tipo, 0.0),
         "total_empleados": len(data),
         "total_eventos": sum(d["eventos"] for d in data),
         "total_horas": round(sum(d["horas"] for d in data), 1),
@@ -1537,14 +1531,15 @@ def get_filter_options(
             pass
 
     if panel == 'ausentismo':
-        from sqlalchemy import or_
-        tipos_aus = ['%incapaci%', '%licencia%', '%ausencia%', '%permiso%', '%maternidad%', '%paternidad%', '%calamidad%', '%luto%', '%accidente%']
         base = base.filter(
             NovedadNomina.unidad == 'dias',
-            or_(*[NovedadNomina.tipo_novedad.ilike(t) for t in tipos_aus]),
+            _orm_aus_tipo_filter(),
         )
     elif panel == 'horas-extras':
-        base = base.filter(NovedadNomina.unidad == 'horas')
+        base = base.filter(
+            NovedadNomina.unidad == 'horas',
+            NovedadNomina.tipo_novedad.in_(list(HE_FACTORES.keys())),
+        )
 
     # Para panel ejecutivo, excluir áreas administrativas/clínicas
     areas_excluir_ejecutivo = {
@@ -1814,8 +1809,6 @@ def get_empleados_lista(db: Session, filters: dict, estado_filter: str = "todos"
 def get_empleados_ausentismo(db: Session, filters: dict) -> dict:
     """Retorna lista detallada de empleados con sus novedades de ausentismo."""
     try:
-        tipos_aus = ['%incapaci%', '%licencia%', '%ausencia%', '%permiso%', '%maternidad%', '%paternidad%', '%calamidad%', '%luto%', '%accidente%']
-
         periodo_filter = filters.get("periodo")
         arch_aus = None
         if periodo_filter:
@@ -1825,7 +1818,6 @@ def get_empleados_ausentismo(db: Session, filters: dict) -> dict:
             except (ValueError, IndexError):
                 arch_aus = None
 
-        # Base query para novedades de ausentismo
         aus_filter = db.query(NovedadNomina).filter(
             NovedadNomina.es_valido == 1,
             NovedadNomina.unidad == 'dias'
@@ -1837,11 +1829,8 @@ def get_empleados_ausentismo(db: Session, filters: dict) -> dict:
         if filters.get("sede"):
             aus_filter = aus_filter.filter(NovedadNomina.sede == filters["sede"])
 
-        from sqlalchemy import or_
-
-        # Filtrar solo registros con tipo de ausencia válido
         aus_records = aus_filter.filter(
-            or_(*[NovedadNomina.tipo_novedad.ilike(t) for t in tipos_aus])
+            _orm_aus_tipo_filter()
         ).order_by(NovedadNomina.fecha_inicio.desc()).all()
 
         # Procesar records para retornar en formato tabla
