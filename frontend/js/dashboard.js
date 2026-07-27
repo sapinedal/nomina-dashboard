@@ -753,12 +753,32 @@ async function loadPanelAusentismo() {
     // KPI valor total
     setText('aus-valor-total', formatCOP(data.total_valor_ausentismo));
 
-    // Tasa de ausentismo = (días perdidos / (empleados activos × 20 días hábiles)) × 100
-    const diasHabiles = 20; // promedio de días hábiles/mes
-    const tasa = data.empleados_activos_mes > 0
-      ? ((data.total_dias_perdidos / (diasHabiles * data.empleados_activos_mes)) * 100).toFixed(1) + '%'
-      : '—';
-    setText('aus-tasa', tasa);
+    // Tasa de ausentismo (calculada en backend):
+    // días perdidos / (días hábiles × empleados activos) × 100
+    const tasaEl = document.getElementById('aus-tasa');
+    const nivelEl = document.getElementById('aus-tasa-nivel');
+    const detalleEl = document.getElementById('aus-tasa-detalle');
+    const tasa = data.tasa_ausentismo;
+    const diasHab = data.dias_habiles_mes ?? 20;
+    const activos = data.empleados_activos_mes ?? 0;
+
+    if (tasa == null || !panelFilters.periodo) {
+      if (tasaEl) { tasaEl.textContent = '—'; tasaEl.style.color = 'var(--muted)'; }
+      if (nivelEl) nivelEl.textContent = panelFilters.periodo
+        ? 'Sin empleados activos en el período'
+        : 'Seleccione un período para calcular la tasa';
+      if (detalleEl) detalleEl.textContent = '';
+    } else {
+      let color = '#166534'; // óptimo
+      let nivel = 'Óptimo';
+      if (tasa > 5) { color = '#b91c1c'; nivel = 'Crítico'; }
+      else if (tasa >= 2) { color = '#c2410c'; nivel = 'Aceptable'; }
+      if (tasaEl) { tasaEl.textContent = `${tasa.toFixed(1)}%`; tasaEl.style.color = color; }
+      if (nivelEl) { nivelEl.textContent = nivel; nivelEl.style.color = color; }
+      if (detalleEl) {
+        detalleEl.textContent = `${formatNumber(data.total_dias_perdidos)} d ÷ (${diasHab} hábiles × ${formatNumber(activos)} activos)`;
+      }
+    }
 
     // Tabla desglose por tipo
     const tbodyAus = document.getElementById('aus-valor-tabla');

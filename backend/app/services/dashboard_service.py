@@ -1153,36 +1153,36 @@ def get_panel_ausentismo(db: Session, filters: dict) -> dict:
         for r in rows_valor
     ]
 
-    # Empleados activos del período (para cálculo correcto de tasa de ausentismo)
-    # Contar empleados activos (sin renuncia/terminación) en el archivo del período
+    # Empleados activos del período (denominador de la tasa de ausentismo).
+    # Solo tiene sentido con un mes concreto (archivo MMYYYY.xlsx).
+    empleados_activos_mes = 0
     if arch_aus:
         emp_activos_query = db.query(NovedadNomina).filter(
             NovedadNomina.es_valido == 1,
             NovedadNomina.archivo_origen == arch_aus,
             NovedadNomina.cedula.isnot(None)
         )
-
-        # Aplicar filtros de área/sede si existen
         emp_activos_query = _apply_area_filter(emp_activos_query, filters)
         if filters.get("sede"):
             emp_activos_query = emp_activos_query.filter(NovedadNomina.sede == filters["sede"])
 
-        # Contar cédulas que NO tienen renuncia/terminación
         todos_emp = set()
         retirados_emp = set()
-
         for row in emp_activos_query.with_entities(NovedadNomina.cedula, NovedadNomina.tipo_novedad).all():
             todos_emp.add(row.cedula)
             if row.tipo_novedad and ('renuncia' in row.tipo_novedad.lower() or 'terminacion' in row.tipo_novedad.lower()):
                 retirados_emp.add(row.cedula)
 
         empleados_activos_mes = len(todos_emp) - len(retirados_emp)
-    else:
-        empleados_activos_mes = 0
 
-    # Evitar división por cero: si no hay empleados activos, tasa es 0
-    if empleados_activos_mes <= 0:
-        empleados_activos_mes = 1  # Usar 1 como mínimo para evitar error, pero tasa será muy alta (alerta)"
+    # Tasa = días perdidos / (días hábiles × empleados activos) × 100
+    # Sin período o sin activos → null (antes se forzaba emp=1 y salían tasas absurdas tipo 7050%).
+    DIAS_HABILES_MES = 20
+    if empleados_activos_mes > 0 and arch_aus:
+        denominador = DIAS_HABILES_MES * empleados_activos_mes
+        tasa_ausentismo = round(float(total_dias) / denominador * 100, 1)
+    else:
+        tasa_ausentismo = None
 
     return {
         "total_dias_perdidos": round(float(total_dias), 1),
@@ -1190,6 +1190,8 @@ def get_panel_ausentismo(db: Session, filters: dict) -> dict:
         "empleados_con_ausencia": empleados_aus,
         "empleados_activos_mes": empleados_activos_mes,
         "empleados_recurrentes": recurrentes,
+        "dias_habiles_mes": DIAS_HABILES_MES,
+        "tasa_ausentismo": tasa_ausentismo,
         "total_valor_ausentismo": round(total_valor_aus, 0),
         "empleados_sin_salario": empleados_sin_salario_aus,
         "valor_por_tipo": valor_por_tipo,
