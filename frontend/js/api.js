@@ -122,7 +122,13 @@ async function apiFetch(endpoint, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: `Error HTTP ${res.status}` }));
-    throw new Error(err.detail || `Error ${res.status}`);
+    let detail = err.detail || `Error ${res.status}`;
+    if (Array.isArray(detail)) {
+      detail = detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+    } else if (detail && typeof detail === 'object') {
+      detail = detail.msg || JSON.stringify(detail);
+    }
+    throw new Error(detail);
   }
 
   // 204 No Content

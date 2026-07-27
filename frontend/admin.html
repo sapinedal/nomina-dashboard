@@ -187,6 +187,7 @@
     <div class="form-field">
       <label>Usuario</label>
       <input type="text" id="edit-username" placeholder="nombre.apellido" autocomplete="off" />
+      <div id="username-lock-hint" style="display:none;font-size:.72rem;color:var(--muted);margin-top:4px">El nombre de usuario no se puede cambiar después de crear la cuenta.</div>
     </div>
     <div class="form-field">
       <label>Nombre completo</label>
@@ -233,8 +234,8 @@
 
 <div class="toast-container" id="toast-container"></div>
 
-<script src="js/escape-html.js?v=20260720a"></script>
-<script src="js/api.js?v=20260727a"></script>
+<script src="js/escape-html.js?v=20260727b"></script>
+<script src="js/api.js?v=20260727b"></script>
 <script>
 (async () => {
   requireAuth();
@@ -329,7 +330,11 @@
   function openModal(userObj) {
     document.getElementById('modal-title').textContent = userObj ? 'Editar usuario' : 'Nuevo usuario';
     document.getElementById('edit-id').value       = userObj?.id || '';
-    document.getElementById('edit-username').value = userObj?.username || '';
+    const usernameInput = document.getElementById('edit-username');
+    usernameInput.value = userObj?.username || '';
+    usernameInput.readOnly = !!userObj;
+    usernameInput.style.opacity = userObj ? '.75' : '1';
+    document.getElementById('username-lock-hint').style.display = userObj ? 'block' : 'none';
     document.getElementById('edit-fullname').value = userObj?.full_name || '';
     document.getElementById('edit-email').value    = userObj?.email || '';
     const role = userObj?.role || 'readonly';
@@ -337,7 +342,7 @@
     document.getElementById('edit-password').value = '';
     document.getElementById('pw-hint').style.display  = userObj ? 'inline' : 'none';
     document.getElementById('field-active').style.display = userObj ? 'block' : 'none';
-    if (userObj) document.getElementById('edit-active').value = String(userObj.is_active);
+    if (userObj) document.getElementById('edit-active').value = String(!!userObj.is_active);
 
     selectedAreas = new Set(userObj?.areas || []);
     document.getElementById('areas-search').value = '';
@@ -346,6 +351,7 @@
     renderAreaChecklist();
 
     modal.classList.add('open');
+    (userObj ? document.getElementById('edit-fullname') : usernameInput).focus();
   }
 
   async function saveUser() {
@@ -358,6 +364,8 @@
     const isActive = document.getElementById('edit-active').value !== 'false';
 
     if (!username) { showToast('El nombre de usuario es obligatorio', 'warning'); return; }
+    if (!fullName) { showToast('El nombre completo es obligatorio', 'warning'); return; }
+    if (!email) { showToast('El correo es obligatorio', 'warning'); return; }
 
     if (role !== 'admin' && selectedAreas.size === 0) {
       const seguir = confirm(
@@ -368,24 +376,31 @@
       if (!seguir) return;
     }
 
-    const body = { username, full_name: fullName, email, role, areas: [...selectedAreas] };
+    const body = { full_name: fullName, email, role, areas: [...selectedAreas] };
     if (password) body.password = password;
-    if (id) body.is_active = isActive;
 
+    const btn = document.getElementById('btn-save-modal');
+    btn.disabled = true;
     try {
       if (id) {
-        await apiFetch(`${API.users}${id}`, { method: 'PUT', body: JSON.stringify(body),
-          headers: { 'Content-Type': 'application/json' } });
+        body.is_active = isActive;
+        await API.updateUser(Number(id), body);
         showToast('Usuario actualizado', 'success');
       } else {
         if (!password) { showToast('La contraseña es obligatoria para un usuario nuevo', 'warning'); return; }
-        await apiFetch(API.users, { method: 'POST', body: JSON.stringify(body),
-          headers: { 'Content-Type': 'application/json' } });
+        body.username = username;
+        body.password = password;
+        await API.createUser(body);
         showToast('Usuario creado', 'success');
       }
       modal.classList.remove('open');
-      loadUsers();
-    } catch (e) { showToast('Error: ' + e.message, 'danger'); }
+      await loadUsers();
+    } catch (e) {
+      const msg = typeof e.message === 'string' ? e.message : 'No se pudo guardar';
+      showToast('Error: ' + msg, 'danger');
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async function loadUsers() {
@@ -405,6 +420,7 @@
   function renderUsers(list) {
     const roleLabel = { admin: ['Admin', 'role-admin'], analyst: ['Analista', 'role-analyst'], readonly: ['Consulta', 'role-readonly'] };
     const tbody = document.getElementById('table-body');
+    const me = getCurrentUser()?.username;
 
     if (!list.length) {
       tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:60px;color:var(--muted)">
@@ -416,6 +432,7 @@
       const [rl, rc] = roleLabel[u.role] || ['—', 'role-readonly'];
       const initials = (u.full_name || u.username || '?').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
       const lastLogin = u.last_login ? formatDate(u.last_login) : 'Nunca';
+      const isSelf = u.username === me;
 
       let areasCell;
       if (u.role === 'admin') {
@@ -429,16 +446,16 @@
           + (resto > 0 ? ` <span style="font-size:.7rem;color:var(--muted)" title="${escapeHtml(u.areas.join(', '))}">+${resto} más</span>` : '');
       }
 
-      return `<tr>
+      return `<tr data-user-id="${u.id}">
         <td style="color:var(--muted);font-size:.75rem">${idx + 1}</td>
         <td>
           <div style="display:flex;align-items:center;gap:10px">
-            <div class="user-avatar">${initials}</div>
-            <span style="font-weight:600;font-size:.83rem">${u.username}</span>
+            <div class="user-avatar">${escapeHtml(initials)}</div>
+            <span style="font-weight:600;font-size:.83rem">${escapeHtml(u.username)}</span>
           </div>
         </td>
-        <td style="font-size:.83rem">${u.full_name || '—'}</td>
-        <td style="font-size:.8rem;color:var(--muted)">${u.email || '—'}</td>
+        <td style="font-size:.83rem">${escapeHtml(u.full_name || '—')}</td>
+        <td style="font-size:.8rem;color:var(--muted)">${escapeHtml(u.email || '—')}</td>
         <td><span class="role-badge ${rc}">${rl}</span></td>
         <td style="max-width:220px">${areasCell}</td>
         <td>
@@ -446,37 +463,71 @@
             ${u.is_active ? 'Activo' : 'Inactivo'}
           </span>
         </td>
-        <td style="font-size:.78rem;color:var(--muted)">${lastLogin}</td>
+        <td style="font-size:.78rem;color:var(--muted)">${escapeHtml(lastLogin)}</td>
         <td style="text-align:right">
-          <div style="display:flex;gap:6px;justify-content:flex-end">
-            <button class="btn-sm" onclick='editUser(${JSON.stringify(u)})'>
+          <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+            <button type="button" class="btn-sm" data-action="edit" data-id="${u.id}" title="Editar">
               <i class="bi bi-pencil"></i> Editar
             </button>
-            ${u.username !== '${user.username}' ? `
-            <button class="btn-sm" style="color:var(--danger);border-color:var(--danger)" onclick="toggleUser(${u.id},${!u.is_active})">
+            ${isSelf ? '' : `
+            <button type="button" class="btn-sm" data-action="toggle" data-id="${u.id}" data-activate="${u.is_active ? '0' : '1'}"
+              style="color:var(--${u.is_active ? 'warning' : 'success'});border-color:currentColor" title="${u.is_active ? 'Desactivar' : 'Activar'}">
               <i class="bi bi-${u.is_active ? 'pause' : 'play'}"></i> ${u.is_active ? 'Desactivar' : 'Activar'}
-            </button>` : ''}
+            </button>
+            <button type="button" class="btn-sm" data-action="delete" data-id="${u.id}"
+              style="color:var(--danger);border-color:var(--danger)" title="Eliminar">
+              <i class="bi bi-trash"></i> Eliminar
+            </button>`}
           </div>
         </td>
       </tr>`;
     }).join('');
+
+    tbody.querySelectorAll('button[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.id);
+        const action = btn.dataset.action;
+        if (action === 'edit') editUserById(id);
+        else if (action === 'toggle') toggleUser(id, btn.dataset.activate === '1');
+        else if (action === 'delete') deleteUserById(id);
+      });
+    });
   }
 
-  window.editUser = (u) => openModal(u);
+  function editUserById(id) {
+    const u = allUsers.find(x => x.id === id);
+    if (!u) { showToast('Usuario no encontrado', 'warning'); return; }
+    openModal(u);
+  }
 
-  window.toggleUser = async (id, activate) => {
+  async function toggleUser(id, activate) {
     const action = activate ? 'activar' : 'desactivar';
-    if (!confirm(`¿${action.charAt(0).toUpperCase()+action.slice(1)} este usuario?`)) return;
+    if (!confirm(`¿${action.charAt(0).toUpperCase() + action.slice(1)} este usuario?`)) return;
     try {
-      await apiFetch(`${API.users}${id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ is_active: activate }),
-        headers: { 'Content-Type': 'application/json' }
-      });
+      await API.updateUser(id, { is_active: activate });
       showToast(`Usuario ${activate ? 'activado' : 'desactivado'}`, 'success');
-      loadUsers();
+      await loadUsers();
     } catch (e) { showToast('Error: ' + e.message, 'danger'); }
-  };
+  }
+
+  async function deleteUserById(id) {
+    const u = allUsers.find(x => x.id === id);
+    if (!u) { showToast('Usuario no encontrado', 'warning'); return; }
+    if (u.username === getCurrentUser()?.username) {
+      showToast('No puedes eliminar tu propio usuario', 'warning');
+      return;
+    }
+    const ok = confirm(
+      `¿Eliminar definitivamente al usuario "${u.username}"?\n\n` +
+      'Esta acción no se puede deshacer. Sus áreas asignadas también se eliminarán.'
+    );
+    if (!ok) return;
+    try {
+      await API.deleteUser(id);
+      showToast(`Usuario "${u.username}" eliminado`, 'success');
+      await loadUsers();
+    } catch (e) { showToast('Error: ' + e.message, 'danger'); }
+  }
 
   loadUsers();
 })();
