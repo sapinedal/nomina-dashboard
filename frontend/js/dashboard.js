@@ -281,7 +281,7 @@ async function loadKPIs() {
     } else {
       setText('kpi-valor-sub', 'costo total calculado desde salarios');
       setText('kpi-valor-he-sub', 'costo monetario HE + recargos del período');
-      setText('kpi-valor-aus-sub', 'costo monetario días de ausencia del período');
+      setText('kpi-valor-aus-sub', 'incapacidades, licencias, permisos y calamidades');
     }
 
     // Empleados activos / inactivos
