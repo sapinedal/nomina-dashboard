@@ -126,12 +126,12 @@
 
 <div class="toast-container" id="toast-container"></div>
 
-<script src="js/api.js?v=20260727a"></script>
+<script src="js/api.js?v=20260729a"></script>
 <script>
 (async () => {
-  requireAuth();
+  const user = await requireAuth();
+  if (!user) return;
 
-  const user = getCurrentUser();
   document.getElementById('user-name').textContent = user?.username || '—';
   const roleBadge = document.getElementById('user-role');
   const roleMap = { admin: ['Admin', 'role-admin'], analyst: ['Analista', 'role-analyst'], readonly: ['Consulta', 'role-readonly'] };
