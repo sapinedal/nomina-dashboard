@@ -4,7 +4,7 @@ import redis
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 
 from app.config import settings
@@ -16,7 +16,11 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+# auto_error=False: permite autenticar también vía cookie HttpOnly (DEF-0003).
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
+
+ACCESS_COOKIE_NAME = "nb_access_token"
+REFRESH_COOKIE_NAME = "nb_refresh_token"
 
 # from_url() no conecta de inmediato (lazy): si Redis no esta disponible al
 # arrancar la app, esto NO falla el startup -- el primer error real ocurre
@@ -132,8 +136,16 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
     return user
 
 
+def extract_access_token(request: Request, bearer: Optional[str] = None) -> Optional[str]:
+    """Prioridad: Authorization Bearer → cookie HttpOnly."""
+    if bearer:
+        return bearer
+    return request.cookies.get(ACCESS_COOKIE_NAME)
+
+
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    bearer: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
     credentials_exception = HTTPException(
@@ -141,6 +153,9 @@ async def get_current_user(
         detail="No se pudo validar las credenciales",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = extract_access_token(request, bearer)
+    if not token:
+        raise credentials_exception
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         # Un refresh token no debe poder autenticar requests directamente

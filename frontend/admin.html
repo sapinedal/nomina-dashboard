@@ -235,12 +235,12 @@
 <div class="toast-container" id="toast-container"></div>
 
 <script src="js/escape-html.js?v=20260727b"></script>
-<script src="js/api.js?v=20260727b"></script>
+<script src="js/api.js?v=20260729a"></script>
 <script>
 (async () => {
-  requireAuth();
+  const user = await requireAuth();
+  if (!user) return;
 
-  const user = getCurrentUser();
   if (user?.role !== 'admin') {
     showToast('Solo administradores pueden acceder a esta página', 'danger');
     setTimeout(() => { window.location.href = 'dashboard.html'; }, 1500);
