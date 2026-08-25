@@ -38,3 +38,11 @@ server.pid
 ~$*
 .DS_Store
 Thumbs.db
+
+# TLS private material (DEF-0001)
+nginx/certs/*.pem
+nginx/certs/*.key
+!nginx/certs/README.md
+
+# Bases locales
+*.db

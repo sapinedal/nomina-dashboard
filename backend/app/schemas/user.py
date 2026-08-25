@@ -81,7 +81,8 @@ class AccessTokenResponse(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    """refresh_token opcional: el navegador lo envía vía cookie HttpOnly."""
+    refresh_token: Optional[str] = None
 
 
 class LogoutRequest(BaseModel):

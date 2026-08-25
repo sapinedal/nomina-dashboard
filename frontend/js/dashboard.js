@@ -9,7 +9,8 @@ let activePanel = 'ejecutivo';
 // ── Inicialización ────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
-  requireAuth();
+  const user = await requireAuth();
+  if (!user) return;
   initUserUI();
   initDarkMode();
   initPanelTabs();
