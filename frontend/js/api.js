@@ -193,9 +193,74 @@ const API = {
   updateUser:    (id, data)    => apiFetch(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteUser:    (id)          => apiFetch(`/api/users/${id}`, { method: 'DELETE' }),
 
-  exportExcel:   (params = {}) => `${API_BASE}/api/export/excel?` + new URLSearchParams(clean(params)),
-  exportPDF:     (params = {}) => `${API_BASE}/api/export/pdf?`   + new URLSearchParams(clean(params)),
+  downloadExcel: (params = {}) => downloadFile('/api/export/excel?' + new URLSearchParams(clean(params))),
+  downloadPDF:   (params = {}) => downloadFile('/api/export/pdf?'   + new URLSearchParams(clean(params))),
 };
+
+/** Permisos por perfil. Espejo de backend/app/services/permissions.py, usado
+ *  solo como respaldo: la fuente real es `user.permissions` que llega en
+ *  /api/auth/me. Si ambos difieren manda el backend, que es quien bloquea. */
+const ROLE_PERMISSIONS = {
+  admin:    ['empleados_periodo', 'export_excel', 'export_pdf', 'usuarios', 'etl'],
+  analyst:  ['empleados_periodo', 'export_excel', 'export_pdf'],
+  readonly: [],
+};
+
+const PERMISSION_LABELS = {
+  empleados_periodo: 'Ver empleados por período',
+  export_excel:      'Exportar a Excel',
+  export_pdf:        'Exportar a PDF',
+  usuarios:          'Administrar usuarios',
+  etl:               'Ejecutar carga ETL / Trazalo',
+};
+
+function permissionsForRole(role) {
+  return ROLE_PERMISSIONS[role] || [];
+}
+
+function hasPermission(code) {
+  const user = getCurrentUser();
+  if (!user) return false;
+  const perms = Array.isArray(user.permissions) ? user.permissions : permissionsForRole(user.role);
+  return perms.includes(code);
+}
+
+/** Descarga por fetch en vez de <a href> para poder leer el error: si el
+ *  backend responde 403 por permisos, un enlace directo abriría una pestaña
+ *  con JSON crudo en lugar de avisar en la interfaz. */
+async function downloadFile(endpoint) {
+  let res = await fetch(`${API_BASE}${endpoint}`, { credentials: 'include' });
+
+  if (res.status === 401 && sessionStorage.getItem('token_expires_at')) {
+    try {
+      await refreshAccessToken();
+      res = await fetch(`${API_BASE}${endpoint}`, { credentials: 'include' });
+    } catch {
+      return;
+    }
+  }
+
+  if (res.status === 401) {
+    clearSession();
+    window.location.href = 'login.html';
+    return;
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `Error HTTP ${res.status}` }));
+    throw new Error(formatApiError(err, `Error ${res.status}`));
+  }
+
+  const match = (res.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)"?/i);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = match ? match[1] : 'descarga';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 function clean(obj) {
   return Object.fromEntries(

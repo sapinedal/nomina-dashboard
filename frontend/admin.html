@@ -22,6 +22,11 @@
     }
     .modal-box h2 { font-size: 1rem; font-weight: 700; margin: 0 0 18px; }
     .modal-box .form-field { margin-bottom: 14px; }
+    .perm-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+    .perm-list li { display: flex; align-items: center; gap: 7px; font-size: .82rem; }
+    .perm-list .perm-on { color: #16a34a; }
+    .perm-list .perm-off { color: var(--muted); }
+    .perm-list li.off span { color: var(--muted); text-decoration: line-through; }
     .modal-box .form-field label { font-size:.76rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; display:block; margin-bottom:5px; }
     .modal-box .form-field input,
     .modal-box .form-field select {
@@ -213,6 +218,12 @@
       <input type="text" id="areas-search" placeholder="Buscar área..." autocomplete="off" />
       <div class="areas-list" id="areas-list"></div>
     </div>
+    <div class="form-field" id="field-permissions">
+      <label>Permisos del perfil
+        <span style="font-weight:400;text-transform:none;letter-spacing:0">(definidos por el rol, no editables)</span>
+      </label>
+      <ul class="perm-list" id="perm-list"></ul>
+    </div>
     <div class="form-field" id="field-password">
       <label>Contraseña <span id="pw-hint" style="font-weight:400;text-transform:none;letter-spacing:0">(dejar vacío para no cambiar)</span></label>
       <input type="password" id="edit-password" placeholder="••••••••" autocomplete="new-password" />
@@ -235,7 +246,7 @@
 <div class="toast-container" id="toast-container"></div>
 
 <script src="js/escape-html.js?v=20260727b"></script>
-<script src="js/api.js?v=20260729a"></script>
+<script src="js/api.js?v=20260825a"></script>
 <script>
 (async () => {
   const user = await requireAuth();
@@ -325,7 +336,21 @@
   // en el backend) -- ocultar la sección para no sugerir que aplica.
   document.getElementById('edit-role').addEventListener('change', (e) => {
     document.getElementById('field-areas').style.display = e.target.value === 'admin' ? 'none' : 'block';
+    renderRolePermissions(e.target.value);
   });
+
+  function renderRolePermissions(role) {
+    const list = document.getElementById('perm-list');
+    if (!list) return;
+    const granted = new Set(permissionsForRole(role));
+    list.innerHTML = Object.entries(PERMISSION_LABELS).map(([code, label]) => {
+      const on = granted.has(code);
+      return `<li class="${on ? '' : 'off'}">
+        <i class="bi ${on ? 'bi-check-circle-fill perm-on' : 'bi-dash-circle perm-off'}"></i>
+        <span>${escapeHtml(label)}</span>
+      </li>`;
+    }).join('');
+  }
 
   function openModal(userObj) {
     document.getElementById('modal-title').textContent = userObj ? 'Editar usuario' : 'Nuevo usuario';
@@ -347,6 +372,7 @@
     selectedAreas = new Set(userObj?.areas || []);
     document.getElementById('areas-search').value = '';
     document.getElementById('field-areas').style.display = role === 'admin' ? 'none' : 'block';
+    renderRolePermissions(role);
     renderAreaChips();
     renderAreaChecklist();
 

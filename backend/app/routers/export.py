@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
-from app.services.auth_service import get_current_user, require_admin_or_analyst
+from app.services.auth_service import get_user_areas, require_permission
+from app.services.permissions import PERM_EXPORT_EXCEL, PERM_EXPORT_PDF
 from app.services import dashboard_service as svc
 
 router = APIRouter(prefix="/api/export", tags=["Exportación"])
@@ -25,7 +26,7 @@ async def export_excel(
     tipo_novedad: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_or_analyst),
+    current_user: User = Depends(require_permission(PERM_EXPORT_EXCEL)),
 ):
     import xlsxwriter
 
@@ -36,6 +37,7 @@ async def export_excel(
         "tipo_novedad": tipo_novedad,
         "periodo": periodo,
         "cedula": None,
+        "_allowed_areas": get_user_areas(current_user),
     }
     result = svc.get_table_data(db, filters, page=1, page_size=100_000)
 
@@ -99,7 +101,7 @@ async def export_pdf(
     tipo_novedad: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_or_analyst),
+    current_user: User = Depends(require_permission(PERM_EXPORT_PDF)),
 ):
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
@@ -115,6 +117,7 @@ async def export_pdf(
         "tipo_novedad": tipo_novedad,
         "periodo": periodo,
         "cedula": None,
+        "_allowed_areas": get_user_areas(current_user),
     }
     kpis = svc.get_kpis(db, filters)
     result = svc.get_table_data(db, filters, page=1, page_size=500)
