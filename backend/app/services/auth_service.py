@@ -11,6 +11,7 @@ from app.config import settings
 from app.models.user import User
 from app.database import get_db
 from app.schemas.user import TokenData
+from app.services.permissions import role_has_permission
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -207,3 +208,15 @@ def require_role(*roles: str):
 
 require_admin = require_role("admin")
 require_admin_or_analyst = require_role("admin", "analyst")
+
+
+def require_permission(permission: str):
+    """Dependencia FastAPI: el rol del usuario debe incluir el permiso."""
+    async def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not role_has_permission(current_user.role, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"No tiene permiso: {permission}",
+            )
+        return current_user
+    return dependency

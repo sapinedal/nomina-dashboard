@@ -5,7 +5,8 @@ from datetime import date
 
 from app.database import get_db
 from app.models.user import User
-from app.services.auth_service import get_current_user, get_user_areas
+from app.services.auth_service import get_current_user, get_user_areas, require_permission
+from app.services.permissions import PERM_EMPLEADOS_PERIODO
 from app.services import dashboard_service as svc
 from app.schemas.dashboard import KPIResponse, ChartResponse, PaginatedTable, DashboardResponse, AlertsResponse, EmpleadosListaResponse
 
@@ -219,7 +220,7 @@ async def get_empleados(
     periodo: Optional[str] = Query(None),
     estado: str = Query("todos", description="todos | activo | inactivo"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission(PERM_EMPLEADOS_PERIODO)),
 ):
     filters = _build_filters(fecha_inicio, fecha_fin, area, sede, tipo_novedad, periodo, None, current_user)
     return svc.get_empleados_lista(db, filters, estado)

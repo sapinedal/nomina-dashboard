@@ -180,10 +180,93 @@ const API = {
   updateUser:    (id, data)    => apiFetch(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteUser:    (id)          => apiFetch(`/api/users/${id}`, { method: 'DELETE' }),
 
-  // ── Exportación
+  // ── Exportación (fetch + Bearer: <a href> no envía el JWT de localStorage)
+  downloadExcel: (params = {}) => downloadFile('/api/export/excel?' + new URLSearchParams(clean(params))),
+  downloadPDF:   (params = {}) => downloadFile('/api/export/pdf?'   + new URLSearchParams(clean(params))),
   exportExcel:   (params = {}) => `${API_BASE}/api/export/excel?` + new URLSearchParams(clean(params)),
   exportPDF:     (params = {}) => `${API_BASE}/api/export/pdf?`   + new URLSearchParams(clean(params)),
 };
+
+/** Permisos por perfil (espejo de backend/app/services/permissions.py). */
+const ROLE_PERMISSIONS = {
+  admin: ['empleados_periodo', 'export_excel', 'export_pdf', 'usuarios', 'etl'],
+  analyst: ['empleados_periodo', 'export_excel', 'export_pdf'],
+  readonly: [],
+};
+
+const PERMISSION_LABELS = {
+  empleados_periodo: 'Ver empleados por período',
+  export_excel: 'Exportar a Excel',
+  export_pdf: 'Exportar a PDF',
+  usuarios: 'Administrar usuarios',
+  etl: 'Ejecutar carga ETL / Trazalo',
+};
+
+function permissionsForRole(role) {
+  return ROLE_PERMISSIONS[role] || [];
+}
+
+function hasPermission(code) {
+  const user = getCurrentUser();
+  if (!user) return false;
+  const perms = Array.isArray(user.permissions) ? user.permissions : permissionsForRole(user.role);
+  return perms.includes(code);
+}
+
+function formatApiError(payload, fallback = 'Error inesperado') {
+  if (payload == null) return fallback;
+  if (typeof payload === 'string') return payload;
+  const detail = payload.detail !== undefined ? payload.detail : payload;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => (typeof d === 'string' ? d : (d && d.msg) || '')).filter(Boolean).join('; ') || fallback;
+  }
+  if (detail && typeof detail === 'object' && typeof detail.msg === 'string') return detail.msg;
+  return fallback;
+}
+
+async function downloadFile(endpoint) {
+  const token = localStorage.getItem('token');
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  let res = await fetch(`${API_BASE}${endpoint}`, { headers });
+
+  if (res.status === 401 && localStorage.getItem('refresh_token')) {
+    try {
+      const newToken = await refreshAccessToken();
+      res = await fetch(`${API_BASE}${endpoint}`, {
+        headers: { Authorization: `Bearer ${newToken}` },
+      });
+    } catch {
+      return;
+    }
+  }
+
+  if (res.status === 401) {
+    clearSession();
+    window.location.href = 'login.html';
+    return;
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `Error HTTP ${res.status}` }));
+    throw new Error(formatApiError(err, `Error ${res.status}`));
+  }
+
+  const blob = await res.blob();
+  let filename = 'descarga';
+  const cd = res.headers.get('Content-Disposition') || '';
+  const m = cd.match(/filename="?([^";]+)"?/i);
+  if (m) filename = m[1];
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 /** Eliminar claves con valores nulos/vacíos antes de serializar params */
 function clean(obj) {

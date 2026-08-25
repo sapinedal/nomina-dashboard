@@ -68,6 +68,14 @@
     .areas-list label:hover { background:rgba(0,0,0,.04); }
     .areas-list input[type="checkbox"] { width:auto; accent-color:var(--primary); cursor:pointer; }
     .areas-list .areas-empty { padding:14px; text-align:center; color:var(--muted); font-size:.78rem; }
+    .perm-list { display:flex; flex-direction:column; gap:6px; margin:0; padding:0; list-style:none; }
+    .perm-list li {
+      display:flex; align-items:center; gap:8px; font-size:.8rem; font-weight:500;
+      text-transform:none; letter-spacing:0; color:var(--text);
+    }
+    .perm-list li i { font-size:.95rem; }
+    .perm-on { color:#059669; }
+    .perm-off { color:var(--muted); }
   </style>
 </head>
 <body>
@@ -205,6 +213,10 @@
         <option value="admin">Administrador</option>
       </select>
     </div>
+    <div class="form-field" id="field-permissions">
+      <label>Permisos del perfil</label>
+      <ul class="perm-list" id="perm-list"></ul>
+    </div>
     <div class="form-field" id="field-areas">
       <label>Áreas a cargo
         <span style="font-weight:400;text-transform:none;letter-spacing:0">(solo ve/gestiona novedades de estas áreas)</span>
@@ -234,8 +246,8 @@
 
 <div class="toast-container" id="toast-container"></div>
 
-<script src="js/escape-html.js?v=20260727b"></script>
-<script src="js/api.js?v=20260727b"></script>
+<script src="js/escape-html.js?v=20260825a"></script>
+<script src="js/api.js?v=20260825a"></script>
 <script>
 (async () => {
   requireAuth();
@@ -325,7 +337,21 @@
   // en el backend) -- ocultar la sección para no sugerir que aplica.
   document.getElementById('edit-role').addEventListener('change', (e) => {
     document.getElementById('field-areas').style.display = e.target.value === 'admin' ? 'none' : 'block';
+    renderRolePermissions(e.target.value);
   });
+
+  function renderRolePermissions(role) {
+    const list = document.getElementById('perm-list');
+    if (!list) return;
+    const granted = new Set(permissionsForRole(role));
+    list.innerHTML = Object.entries(PERMISSION_LABELS).map(([code, label]) => {
+      const on = granted.has(code);
+      return `<li>
+        <i class="bi ${on ? 'bi-check-circle-fill perm-on' : 'bi-dash-circle perm-off'}"></i>
+        <span>${escapeHtml(label)}</span>
+      </li>`;
+    }).join('');
+  }
 
   function openModal(userObj) {
     document.getElementById('modal-title').textContent = userObj ? 'Editar usuario' : 'Nuevo usuario';
@@ -347,6 +373,7 @@
     selectedAreas = new Set(userObj?.areas || []);
     document.getElementById('areas-search').value = '';
     document.getElementById('field-areas').style.display = role === 'admin' ? 'none' : 'block';
+    renderRolePermissions(role);
     renderAreaChips();
     renderAreaChecklist();
 

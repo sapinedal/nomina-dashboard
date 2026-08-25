@@ -41,6 +41,14 @@ function initUserUI() {
   if (user.role === 'admin' || user.role === 'analyst') {
     document.querySelectorAll('.analyst-only').forEach(el => { el.style.display = 'flex'; });
   }
+  if (hasPermission('empleados_periodo')) {
+    const card = document.getElementById('card-empleados-periodo');
+    if (card) card.style.display = '';
+  }
+  const btnExcel = document.getElementById('btn-export-excel');
+  if (btnExcel) btnExcel.style.display = hasPermission('export_excel') ? 'flex' : 'none';
+  const btnPdf = document.getElementById('btn-export-pdf');
+  if (btnPdf) btnPdf.style.display = hasPermission('export_pdf') ? 'flex' : 'none';
 }
 
 // ── Dark mode ─────────────────────────────────────────────────
@@ -155,7 +163,12 @@ function updateFilterBar(panelName) {
 async function loadPanel(panelName) {
   switch (panelName) {
     case 'ejecutivo':
-      await Promise.all([loadKPIs(), loadCharts(), loadResumenPorArea(), loadEmpleadosLista()]);
+      await Promise.all([
+        loadKPIs(),
+        loadCharts(),
+        loadResumenPorArea(),
+        hasPermission('empleados_periodo') ? loadEmpleadosLista() : Promise.resolve(),
+      ]);
       break;
     case 'operativo':
       await loadPanelOperativo();
@@ -380,6 +393,7 @@ let _empFiltroEstado = 'todos';
 let _empFiltroArea   = '';     // área seleccionada en el filtro inline
 
 async function loadEmpleadosLista() {
+  if (!hasPermission('empleados_periodo')) return;
   const tbody = document.getElementById('emp-tbody');
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px">Cargando…</td></tr>';
@@ -1072,24 +1086,28 @@ function initTableSorting() {
 
 // ── Exportación ───────────────────────────────────────────────
 
-document.getElementById('btn-export-excel')?.addEventListener('click', () => {
-  const params = new URLSearchParams(Object.fromEntries(
-    Object.entries(currentFilters).filter(([, v]) => v)
-  ));
-  const link = document.createElement('a');
-  link.href = `${window.location.origin}/api/export/excel?${params}`;
-  link.target = '_blank';
-  link.click();
+document.getElementById('btn-export-excel')?.addEventListener('click', async () => {
+  if (!hasPermission('export_excel')) {
+    showToast('Su perfil no permite exportar a Excel', 'warning');
+    return;
+  }
+  try {
+    await API.downloadExcel(currentFilters);
+  } catch (e) {
+    showToast('No se pudo exportar a Excel: ' + e.message, 'danger');
+  }
 });
 
-document.getElementById('btn-export-pdf')?.addEventListener('click', () => {
-  const params = new URLSearchParams(Object.fromEntries(
-    Object.entries(currentFilters).filter(([, v]) => v)
-  ));
-  const link = document.createElement('a');
-  link.href = `${window.location.origin}/api/export/pdf?${params}`;
-  link.target = '_blank';
-  link.click();
+document.getElementById('btn-export-pdf')?.addEventListener('click', async () => {
+  if (!hasPermission('export_pdf')) {
+    showToast('Su perfil no permite exportar a PDF', 'warning');
+    return;
+  }
+  try {
+    await API.downloadPDF(currentFilters);
+  } catch (e) {
+    showToast('No se pudo exportar a PDF: ' + e.message, 'danger');
+  }
 });
 
 // ── ETL manual (solo admin) ───────────────────────────────────
