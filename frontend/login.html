@@ -17,25 +17,25 @@
       <p class="tagline">Dashboard de Novedades de Nómina · Sumimedical</p>
     </div>
 
-    <div class="alert-error" id="alert-box" role="alert" style="display:none">
+    <div class="alert-error" id="alert-box" role="alert">
       <i class="bi bi-exclamation-triangle-fill"></i>
       <span id="alert-msg"></span>
     </div>
 
-    <form id="login-form">
+    <form id="login-form" novalidate>
       <div class="form-field">
         <label for="username">Usuario</label>
         <div class="input-wrap">
           <i class="bi bi-person"></i>
-          <input type="text" id="username" name="username" placeholder="nombre.usuario" autocomplete="username" required minlength="1" />
+          <input type="text" id="username" placeholder="nombre.usuario" autocomplete="username" required />
         </div>
       </div>
       <div class="form-field">
         <label for="password">Contraseña</label>
         <div class="input-wrap">
           <i class="bi bi-lock"></i>
-          <input type="password" id="password" name="password" placeholder="••••••••" autocomplete="current-password" required minlength="1" />
-          <button type="button" class="btn-pw-toggle" id="toggle-pw" tabindex="-1" aria-label="Mostrar u ocultar contraseña">
+          <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" required />
+          <button type="button" class="btn-pw-toggle" id="toggle-pw" tabindex="-1">
             <i class="bi bi-eye"></i>
           </button>
         </div>
@@ -54,7 +54,7 @@
     </p>
   </div>
 
-  <script src="js/api.js?v=20260825a"></script>
+  <script src="js/api.js?v=20260727a"></script>
   <script>
     document.getElementById('toggle-pw').addEventListener('click', () => {
       const pw = document.getElementById('password');
@@ -63,50 +63,33 @@
       else { pw.type = 'password'; icon.className = 'bi bi-eye'; }
     });
 
-    function resetLoginButton() {
-      document.getElementById('btn-text').style.display = 'flex';
-      document.getElementById('btn-spin').style.display = 'none';
-    }
-
-    function showLoginError(msg) {
-      const alertBox = document.getElementById('alert-box');
-      document.getElementById('alert-msg').textContent = msg;
-      alertBox.style.display = 'flex';
-      resetLoginButton();
-    }
-
     document.getElementById('login-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const form = e.target;
       const alertBox = document.getElementById('alert-box');
       alertBox.style.display = 'none';
-
-      // DEF-0005: validación cliente antes de llamar API
-      if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-      }
-
-      const username = document.getElementById('username').value.trim();
-      const password = document.getElementById('password').value;
-      if (!username || !password) {
-        showLoginError('Usuario y contraseña son obligatorios');
-        return;
-      }
-
       document.getElementById('btn-text').style.display = 'none';
       document.getElementById('btn-spin').style.display = 'flex';
 
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
       try {
+        // API.login() ya vive en api.js -- reusarlo evita duplicar el
+        // fetch a mano y mantiene un solo lugar que sabe hablarle a
+        // /api/auth/token.
         const data = await API.login(username, password);
-        storeSession({ expires_in: data.expires_in, user: data.user });
+        storeSession(data); // access_token + refresh_token + token_expires_at, arma el timer
+        localStorage.setItem('user', JSON.stringify(data.user));
         window.location.href = 'dashboard.html';
       } catch (err) {
-        showLoginError(err.message || 'Usuario o contraseña incorrectos');
+        document.getElementById('alert-msg').textContent = err.message;
+        alertBox.style.display = 'flex';
+        document.getElementById('btn-text').style.display = 'flex';
+        document.getElementById('btn-spin').style.display = 'none';
       }
     });
 
-    API.me().then(() => { window.location.href = 'dashboard.html'; }).catch(() => {});
+    if (localStorage.getItem('token')) window.location.href = 'dashboard.html';
   </script>
 </body>
 </html>
