@@ -1,7 +1,8 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, computed_field, field_validator
 from typing import Optional
 from datetime import datetime
 from app.models.user import UserRole
+from app.services.permissions import permissions_for_role
 
 
 class UserBase(BaseModel):
@@ -62,6 +63,13 @@ class UserResponse(UserBase):
     areas: list[str] = []
 
     model_config = {"from_attributes": True}
+
+    @computed_field
+    @property
+    def permissions(self) -> list[str]:
+        """Derivado del rol, no almacenado: el frontend decide qué mostrar sin
+        replicar la tabla de permisos ni consultar otro endpoint."""
+        return permissions_for_role(self.role)
 
 
 class Token(BaseModel):
