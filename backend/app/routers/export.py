@@ -14,8 +14,10 @@ from app.models.user import User
 from app.services.auth_service import get_user_areas, require_permission
 from app.services.permissions import PERM_EXPORT_EXCEL, PERM_EXPORT_PDF, PERM_REPORTE_NOMINA
 from app.services import dashboard_service as svc
-from app.services.excel_report import construir_libro_excel, construir_libro_nomina
+from app.services.excel_report import (construir_libro_excel, construir_libro_nomina,
+                                       construir_libro_sin_salario)
 from app.services.nomina_report import armar_reporte
+from app.services.trazalo_sync import obtener_empleados_sin_salario
 from app.services.smlmv import SMLMVNoConfigurado, resolver_smlmv
 from app.config import settings
 from fastapi import HTTPException, status
@@ -136,6 +138,44 @@ async def export_reporte_nomina(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/empleados-sin-salario", summary="Empleados activos sin salario en Trazalo")
+async def export_empleados_sin_salario(
+    current_user: User = Depends(require_permission(PERM_REPORTE_NOMINA)),
+):
+    """Quienes estan activos en Trazalo pero sin salario cargado.
+
+    Se consulta Trazalo en vivo y no la base local: `salarios_empleados` solo
+    tiene fila para quien tuvo salario alguna vez, asi que armar la lista desde
+    ahi se saltaria justo a quienes nunca lo han tenido, que son los que
+    interesan.
+
+    Va con el permiso del reporte de nomina, no con el de exportar Excel: el
+    listado es de gestion de personal y su audiencia es la misma, aunque no
+    lleve ninguna cifra.
+    """
+    try:
+        filas = obtener_empleados_sin_salario()
+    except Exception as exc:
+        # Sin Trazalo no hay lista posible. Se dice con todas sus letras en vez
+        # de devolver un libro vacio, que se leeria como "no falta nadie".
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"No se pudo consultar Trazalo para armar el listado: {exc}",
+        ) from exc
+
+    # Mismo criterio fail-closed que el resto del dashboard: None es admin (sin
+    # restriccion) y una lista vacia es un usuario restringido sin areas, que
+    # debe ver CERO filas y no todas.
+    filas = svc.filtrar_filas_por_areas(filas, get_user_areas(current_user))
+
+    output = construir_libro_sin_salario(filas)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="empleados_sin_salario.xlsx"'},
     )
 
 

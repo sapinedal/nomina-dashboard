@@ -201,6 +201,62 @@ def sincronizar_roster(db, roster: list) -> dict:
     return {"con_salario": len(con_salario), "sin_salario": len(sin_salario)}
 
 
+
+def obtener_empleados_sin_salario() -> list[dict]:
+    """Empleados activos en Trazalo a los que ese sistema no les registra salario.
+
+    Es la lista que NO se puede sacar de la base local: `salarios_empleados`
+    solo tiene fila para quien tuvo salario alguna vez, asi que armarla desde
+    ahi se saltaria justo a quienes nunca lo han tenido — que son la mayoria del
+    personal clinico y el motivo por el que este reporte existe.
+
+    Consulta Trazalo en vivo, con la misma definicion de "activo" que usa el
+    sync (`u.activo = true`), para que la lista cuadre con lo que el dashboard
+    cuenta como `empleados_sin_salario`. Un salario en cero se trata como
+    ausente: para liquidar da exactamente lo mismo.
+
+    Devuelve identidad, nunca dinero: el punto es saber a quien le falta cargar
+    el salario, no cuanto gana nadie. El area sale normalizada con `_area_upper`
+    igual que en el resto del sistema, porque el endpoint filtra con ella por
+    las areas autorizadas del usuario.
+    """
+    import psycopg2.extras  # ver el comentario de _get_connection
+
+    conn = _get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT u.documento AS cedula,
+                   TRIM(CONCAT_WS(' ', u.primer_nombre, u.segundo_nombre,
+                                       u.primer_apellido, u.segundo_apellido)) AS nombre,
+                   COALESCE(NULLIF(TRIM(u.area_informativa), ''), a.nombre) AS area,
+                   s.nombre AS sede, c.nombre AS cargo
+            FROM users u
+            LEFT JOIN areas a ON a.id = u.area_id
+            LEFT JOIN sedes s ON s.id = a.sede_id
+            LEFT JOIN cargos c ON c.id = u.cargo_id
+            WHERE u.activo = true AND u.documento IS NOT NULL
+              AND COALESCE(u.salario, 0) <= 0
+        """)
+        filas = [
+            {
+                "cedula": _clean_cedula(r["cedula"]),
+                "nombre": r.get("nombre"),
+                "area": _area_upper(r.get("area")),
+                "sede": r.get("sede"),
+                "cargo": r.get("cargo"),
+            }
+            for r in cur.fetchall()
+        ]
+        cur.close()
+    finally:
+        conn.close()
+
+    filas.sort(key=lambda f: ((f["area"] or ""), (f["nombre"] or "")))
+    logger.info("trazalo_empleados_sin_salario", total=len(filas))
+    return filas
+
+
 def sync_trazalo(db: Session) -> dict:
     """Sincroniza novedades APROBADAS de Trazalo hacia novedades_nomina,
     reemplazando (por período) los registros que venían de Excel."""
