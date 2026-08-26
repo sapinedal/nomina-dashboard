@@ -48,6 +48,25 @@ class TestLiquidarIncapacidad(unittest.TestCase):
         self.assertGreater(r["valor"], 3 * 0.6667 * (SMLMV / 30))
         self.assertIn("se aplico el piso de 1 SMLMV", r["observaciones"])
 
+    def test_el_piso_tambien_cubre_a_quien_gana_mas_del_minimo(self):
+        """La norma no limita el piso a quien devenga el mínimo: ninguna
+        incapacidad puede pagarse bajo el salario mínimo diario (Decreto 780 de
+        2016 art. 3.2.1.10). Con el mínimo de 2026 el umbral es 2.626.357, así
+        que un salario de 2.000.000 cobra el piso y no el 66,67% de su día."""
+        salario, smlmv_2026 = 2_000_000.0, 1_750_905.0
+        r = liquidar_incapacidad(0, 1, salario, smlmv_2026)
+        self.assertAlmostEqual(r["valor"], smlmv_2026 / 30, places=2)
+        self.assertGreater(r["valor"], 0.6667 * salario / 30)
+        self.assertIn("se aplico el piso de 1 SMLMV", r["observaciones"])
+
+    def test_por_encima_del_umbral_se_liquida_el_porcentaje_de_SU_salario(self):
+        """El piso no reemplaza el salario: quien gana por encima del umbral
+        cobra el 66,67% de SU día, que es más que el mínimo diario."""
+        salario, smlmv_2026 = 3_000_000.0, 1_750_905.0
+        r = liquidar_incapacidad(0, 1, salario, smlmv_2026)
+        self.assertAlmostEqual(r["valor"], 0.6667 * salario / 30, places=2)
+        self.assertEqual(r["observaciones"], [])
+
     def test_mas_alla_del_dia_180_no_lo_paga_la_empresa(self):
         """Corresponde a la AFP. Se liquida en 0 y se deja constancia."""
         r = liquidar_incapacidad(178, 5, SALARIO, SMLMV)
@@ -189,6 +208,22 @@ class TestLibroNomina(unittest.TestCase):
         self.assertTrue((ws.cell(1, 1).value or "").startswith("Prenómina de apoyo"))
         self.assertIn("ARL", ws.cell(1, 1).value)
         self.assertEqual(ws.cell(ws.max_row, 1).value, "TOTAL")
+
+    def test_el_libro_deja_constancia_del_piso_aplicado(self):
+        """El SMLMV cambia cada año: sin dejarlo escrito no hay forma de
+        auditar meses después con qué piso se liquidó esta prenómina."""
+        import openpyxl
+        from app.services.nomina_report import armar_reporte
+        from app.services.excel_report import construir_libro_nomina
+        filas = armar_reporte(
+            [dict(cedula="1", nombre_empleado="ANA", area="NOMINA", cargo="AUX",
+                  salario=SALARIO, valor_extras=0.0, dias_incapacidad=0.0,
+                  dias_no_remunerados=0.0, valor_otros_pagos=0.0)], {}, SMLMV)
+        libro = construir_libro_nomina(filas, "2024-08", smlmv=SMLMV, anio_smlmv=2024)
+        ws = openpyxl.load_workbook(libro).active
+        constancia = ws.cell(3, 1).value or ""
+        self.assertIn("SMLMV 2024", constancia)
+        self.assertIn("1,300,000", constancia)
 
 
 class TestEpisodiosContinuos(unittest.TestCase):

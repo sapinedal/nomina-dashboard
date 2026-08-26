@@ -125,11 +125,17 @@ def construir_libro_excel(filas: List[dict], panel: Optional[str] = None) -> io.
     return output
 
 
-def construir_libro_nomina(filas: List[dict], periodo: Optional[str] = None) -> io.BytesIO:
+def construir_libro_nomina(filas: List[dict], periodo: Optional[str] = None,
+                           smlmv: Optional[float] = None,
+                           anio_smlmv: Optional[int] = None) -> io.BytesIO:
     """Reporte de nomina: una fila por empleado, con su salario y el neto.
 
     Las filas llegan ya liquidadas de nomina_report.armar_reporte. Aqui solo se
     dibuja: ningun calculo de dinero vive en esta funcion.
+
+    `smlmv` y `anio_smlmv` solo se imprimen como constancia: el piso legal con
+    el que se liquido tiene que quedar en el libro, porque cambia cada año y sin
+    el dato no hay forma de auditar una cifra meses despues.
     """
     import xlsxwriter
 
@@ -157,6 +163,10 @@ def construir_libro_nomina(filas: List[dict], periodo: Optional[str] = None) -> 
     ws.set_row(0, 28)
     if periodo:
         ws.write(1, 0, f"Período: {periodo}")
+    if smlmv:
+        etiqueta = f"SMLMV {anio_smlmv}" if anio_smlmv else "SMLMV"
+        ws.write(2, 0, f"Piso legal aplicado: 1 {etiqueta} = {smlmv:,.0f} "
+                       f"(día = {smlmv / 30:,.2f})")
 
     FILA_CAB = 3
     columnas = [
