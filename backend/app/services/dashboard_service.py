@@ -1108,6 +1108,82 @@ def get_export_rows(db: Session, filters: dict, panel: Optional[str] = None) -> 
     return [dict(r._mapping) for r in db.execute(sql, params).fetchall()]
 
 
+def _sql_incap_predicate(alias: str = "n") -> str:
+    """Novedades que se liquidan como incapacidad.
+
+    Incluye accidentes: se acordo tratar TODO como origen comun porque el dato
+    no distingue EPS de ARL (ver nomina_report). Un accidente laboral quedara
+    por debajo del 100% que realmente paga la ARL.
+    """
+    return (f"(LOWER({alias}.tipo_novedad) LIKE '%incapaci%' "
+            f"OR LOWER({alias}.tipo_novedad) LIKE '%accidente%')")
+
+
+def get_dias_incapacidad_previos(db: Session, corte: Optional[str]) -> dict:
+    """Dias de incapacidad acumulados por cedula ANTES de `corte` (YYYY-MM-DD).
+
+    Necesario para ubicar cada incapacidad en su tramo: quien ya lleva 89 dias
+    no empieza otra vez en el 66,67%. Se acumula sobre todo el historial, que
+    es lo que se acordo; el limite conocido es que sin diagnostico no se puede
+    distinguir una prorroga de una enfermedad nueva.
+
+    Sin `corte` no hay historial que acumular y se devuelve vacio.
+    """
+    if not corte:
+        return {}
+    sql = text(f"""
+        SELECT n.cedula, COALESCE(SUM(CAST(n.dias AS REAL)), 0) AS dias
+        FROM novedades_nomina n
+        WHERE n.es_valido = 1 AND n.unidad = 'dias' AND n.cedula IS NOT NULL
+          AND {_sql_incap_predicate('n')}
+          AND n.fecha_inicio < :corte
+        GROUP BY n.cedula
+    """)
+    return {r.cedula: float(r.dias or 0) for r in db.execute(sql, {"corte": corte})}
+
+
+def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
+    """Una fila por empleado con su salario y el agregado de sus novedades.
+
+    A diferencia de get_export_rows, que devuelve una fila por novedad, aqui se
+    agrupa por cedula porque el reporte es una prenomina: lo que interesa es el
+    neto de cada persona.
+
+    La autorizacion por area entra por _panel_filters_sql, que aplica
+    _area_sql_clause igual que el resto. Es critico no duplicarla aqui: este
+    reporte expone salarios individuales.
+
+    Los importes de horas extras usan _HE_VALOR_EXPR, la misma expresion que
+    los paneles. Las incapacidades NO se valoran aqui: su liquidacion depende
+    de dias acumulados y de tramos legales, y vive en nomina_report.
+    """
+    extra_where, params = _panel_filters_sql(filters, full=True)
+    incap = _sql_incap_predicate("n")
+    sql = text(f"""
+        SELECT
+            n.cedula,
+            MAX(n.nombre_empleado) AS nombre_empleado,
+            MAX(n.area)  AS area,
+            MAX(n.cargo) AS cargo,
+            MAX(s.salario) AS salario,
+            COALESCE(SUM(CASE WHEN n.unidad = 'horas' AND n.tipo_novedad IN {_HE_TIPOS_SQL}
+                              THEN {_HE_VALOR_EXPR} ELSE 0 END), 0) AS valor_extras,
+            COALESCE(SUM(CASE WHEN n.unidad = 'dias' AND {incap}
+                              THEN CAST(n.dias AS REAL) ELSE 0 END), 0) AS dias_incapacidad,
+            COALESCE(SUM(CASE WHEN n.unidad = 'dias'
+                               AND LOWER(n.tipo_novedad) LIKE '%permiso no rem%'
+                              THEN CAST(n.dias AS REAL) ELSE 0 END), 0) AS dias_no_remunerados,
+            COALESCE(SUM(CASE WHEN n.unidad = 'valor'
+                              THEN CAST(n.dias AS REAL) ELSE 0 END), 0) AS valor_otros_pagos
+        FROM novedades_nomina n
+        LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
+        WHERE n.es_valido = 1 AND n.cedula IS NOT NULL {extra_where}
+        GROUP BY n.cedula
+        ORDER BY MAX(n.area), MAX(n.nombre_empleado)
+    """)
+    return [dict(r._mapping) for r in db.execute(sql, params).fetchall()]
+
+
 def get_panel_ausentismo(db: Session, filters: dict) -> dict:
     """Datos específicos del panel de ausentismo.
     Filtra por archivo_origen (no por el campo periodo): muchos registros del

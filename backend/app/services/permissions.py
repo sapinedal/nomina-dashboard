@@ -8,6 +8,9 @@ PERM_EXPORT_EXCEL = "export_excel"
 PERM_EXPORT_PDF = "export_pdf"
 PERM_USUARIOS = "usuarios"
 PERM_ETL = "etl"
+# Expone salarios individuales, cosa que ningun panel hace: permiso aparte para
+# poder quitarlo sin tocar las demas exportaciones.
+PERM_REPORTE_NOMINA = "reporte_nomina"
 
 PERMISSION_LABELS = {
     PERM_EMPLEADOS_PERIODO: "Ver empleados por período",
@@ -15,6 +18,7 @@ PERMISSION_LABELS = {
     PERM_EXPORT_PDF: "Exportar a PDF",
     PERM_USUARIOS: "Administrar usuarios",
     PERM_ETL: "Ejecutar carga ETL / Trazalo",
+    PERM_REPORTE_NOMINA: "Exportar reporte de nómina (incluye salarios)",
 }
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
@@ -24,11 +28,13 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         PERM_EXPORT_PDF,
         PERM_USUARIOS,
         PERM_ETL,
+        PERM_REPORTE_NOMINA,
     }),
     "analyst": frozenset({
         PERM_EMPLEADOS_PERIODO,
         PERM_EXPORT_EXCEL,
         PERM_EXPORT_PDF,
+        PERM_REPORTE_NOMINA,
     }),
     "readonly": frozenset(),
 }

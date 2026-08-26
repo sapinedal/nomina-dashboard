@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     # Sesión en cookies HttpOnly (DEF-0003). Secure=true requiere HTTPS (DEF-0001).
     COOKIE_SECURE: bool = True
     COOKIE_SAMESITE: str = "lax"
+    # Liquidación de incapacidades (reporte de nómina). SMLMV_MENSUAL es el
+    # salario mínimo legal vigente: sirve de PISO, una incapacidad no puede
+    # liquidarse por debajo. Sin él, el endpoint falla con mensaje explícito en
+    # vez de calcular con una cifra inventada. Hay que actualizarlo cada año.
+    SMLMV_MENSUAL: Optional[float] = None
+    INCAP_PCT_DIAS_1_90: float = 0.6667
+    INCAP_PCT_DIAS_91_180: float = 0.50
+
     # OpenAPI/docs solo con flag explícito (DEF-0002).
     EXPOSE_OPENAPI: bool = False
 
