@@ -174,16 +174,36 @@ def sync_trazalo(db: Session) -> dict:
         if cedula and salario is not None:
             try:
                 salario_val = float(salario)
-                salarios_a_sincronizar.append({"cedula": cedula, "salario": salario_val})
+                salarios_a_sincronizar.append({
+                    "cedula": cedula,
+                    "salario": salario_val,
+                    "nombre": u.get("nombre"),
+                    # _area_upper es la MISMA normalizacion que se aplica al
+                    # area de cada novedad. Sin ella el area del roster no
+                    # casaria con las areas asignadas a un analista y el
+                    # reporte le saldria vacio.
+                    "area": _area_upper(u.get("area")),
+                    "sede": u.get("sede"),
+                    "cargo": u.get("cargo"),
+                })
             except (ValueError, TypeError):
                 continue
 
     if salarios_a_sincronizar:
+        # Se guarda el roster completo, no solo el salario: el reporte de nomina
+        # necesita saber que empleados existen en cada area aunque no tengan
+        # ninguna novedad en el periodo. `activo` viene del WHERE de la consulta
+        # de arriba (u.activo = true), asi que todo lo que llega esta activo.
         sql_upsert = text("""
-            INSERT INTO salarios_empleados (cedula, salario)
-            VALUES (:cedula, :salario)
-            ON CONFLICT (cedula) 
-            DO UPDATE SET salario = EXCLUDED.salario
+            INSERT INTO salarios_empleados (cedula, salario, nombre, area, sede, cargo, activo)
+            VALUES (:cedula, :salario, :nombre, :area, :sede, :cargo, 1)
+            ON CONFLICT (cedula)
+            DO UPDATE SET salario = EXCLUDED.salario,
+                          nombre  = EXCLUDED.nombre,
+                          area    = EXCLUDED.area,
+                          sede    = EXCLUDED.sede,
+                          cargo   = EXCLUDED.cargo,
+                          activo  = 1
         """)
         for item in salarios_a_sincronizar:
             db.execute(sql_upsert, item)

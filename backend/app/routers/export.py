@@ -93,6 +93,16 @@ async def export_reporte_nomina(
                    "por debajo de la norma.",
         )
 
+    if not svc.roster_sincronizado(db):
+        # Tras desplegar, las columnas del roster estan vacias hasta la primera
+        # sincronizacion. Sin este aviso el reporte saldria vacio sin explicar
+        # por que.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El roster de empleados no está sincronizado. Ejecute "
+                   "'Sincronizar Trazalo' antes de generar el reporte de nómina.",
+        )
+
     filters = {
         "periodo": periodo,
         "area": area,
