@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Request, status
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -7,6 +7,7 @@ from app.database import get_db
 from app.middleware.rate_limit import limiter
 from app.models.user import User
 from app.models.execution import ExecutionLog
+from app.services import trazalo_job
 from app.services.auth_service import get_current_user, require_admin
 from app.services.scheduler import trigger_manual_etl
 from app.schemas.execution import ExecutionLogResponse, ExecutionSummary
@@ -46,6 +47,19 @@ async def get_history(
             for r in items
         ],
     }
+
+
+# Declarado ANTES de /{execution_id}: FastAPI resuelve las rutas en orden y
+# esa otra captura cualquier segmento, así que "trazalo-status" se intentaría
+# convertir a int y respondería 422 en vez de llegar aquí.
+@router.get("/trazalo-status", summary="Estado de la sincronización con Trazalo (solo Admin)")
+async def get_trazalo_status(_: User = Depends(require_admin)):
+    """Estado del último sync de Trazalo lanzado en este proceso.
+
+    `status` es uno de: idle (nunca corrió), running, ok, skipped, error.
+    El frontend sondea este endpoint mientras dure la sincronización.
+    """
+    return trazalo_job.get_state()
 
 
 @router.get("/{execution_id}", response_model=ExecutionLogResponse, summary="Detalle de ejecución")
@@ -88,20 +102,32 @@ async def trigger_etl(
     return {"message": "Proceso ETL iniciado en segundo plano", "triggered_by": current_user.username}
 
 
-@router.post("/trigger-trazalo", summary="Sincronizar Trazalo manualmente (solo Admin)")
+@router.post(
+    "/trigger-trazalo",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Sincronizar Trazalo manualmente (solo Admin)",
+)
 @limiter.limit(settings.RATE_LIMIT_TRAZALO_TRIGGER)
 async def trigger_trazalo(
     request: Request,
     current_user: User = Depends(require_admin),
 ):
-    """Ejecuta la sincronización con Trazalo (PostgreSQL) inmediatamente.
+    """Lanza la sincronización con Trazalo (PostgreSQL) en segundo plano.
+
+    Antes el sync corría dentro de este request. Como recorre todo el roster
+    (~1200 empleados) por cada período, la petición quedaba abierta minutos y el
+    navegador terminaba mostrando "Failed to fetch" cuando el proxy cortaba la
+    conexión — sin saber si el sync había terminado. Ahora se responde 202 al
+    instante y el progreso se consulta en GET /api/execution/trazalo-status.
 
     Rate-limited (SEC-4, settings.RATE_LIMIT_TRAZALO_TRIGGER)."""
-    from app.database import SessionLocal
-    from app.services.trazalo_sync import sync_trazalo
-    db = SessionLocal()
-    try:
-        result = sync_trazalo(db)
-        return result
-    finally:
-        db.close()
+    started, state = trazalo_job.start(current_user.username)
+    return {
+        "started": started,
+        "message": (
+            "Sincronización con Trazalo iniciada en segundo plano."
+            if started
+            else "Ya hay una sincronización con Trazalo en curso."
+        ),
+        "job": state,
+    }
