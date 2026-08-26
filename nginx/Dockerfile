@@ -1,9 +1,11 @@
 FROM nginx:1.25-alpine
 
-# Copiar los archivos estáticos del frontend
 COPY ./frontend /usr/share/nginx/html
-
-# Copiar la configuración personalizada de Nginx
 COPY ./nginx/nginx.conf /etc/nginx/nginx.conf
+# Fragmento incluido por nginx.conf: si falta, nginx no arranca.
+COPY ./nginx/security-headers.conf /etc/nginx/security-headers.conf
 
+# Solo 80: el TLS lo termina el proxy de la plataforma. Para un host sin
+# terminador delante, construir con nginx.standalone-tls.conf y montar
+# los certificados en /etc/nginx/certs.
 EXPOSE 80

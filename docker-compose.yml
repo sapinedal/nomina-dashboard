@@ -57,8 +57,11 @@ services:
       dockerfile: ./nginx/Dockerfile
     container_name: nomina_nginx
     restart: unless-stopped
-    # ports:
-    #   - "80:80"
+    # Sin publicar puertos del host: el proxy de la plataforma (Traefik) ya
+    # ocupa el 80 y el 443, y enruta el dominio a este contenedor por la red
+    # interna. Publicarlos aquí hace fallar el despliegue entero.
+    expose:
+      - "80"
     depends_on:
       - backend
     networks:
