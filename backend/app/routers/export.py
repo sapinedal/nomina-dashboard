@@ -100,13 +100,12 @@ async def export_reporte_nomina(
     }
     filas = svc.get_reporte_nomina_rows(db, filters)
 
-    # Los dias de incapacidad ya acumulados antes del periodo situan cada
-    # novedad en su tramo: quien lleva 89 dias no vuelve a empezar en el 66,67%.
-    corte = f"{periodo}-01" if periodo else None
-    previos = svc.get_dias_incapacidad_previos(db, corte)
+    # Con fechas, para agrupar por episodio: dos incapacidades separadas cuentan
+    # cada una desde el dia 1; solo las continuas (prorrogas) acumulan.
+    incapacidades = svc.get_incapacidades_por_cedula(db, filters, periodo)
 
     filas = armar_reporte(
-        filas, previos,
+        filas, incapacidades,
         smlmv=float(settings.SMLMV_MENSUAL),
         pct_66=settings.INCAP_PCT_DIAS_1_90,
         pct_50=settings.INCAP_PCT_DIAS_91_180,

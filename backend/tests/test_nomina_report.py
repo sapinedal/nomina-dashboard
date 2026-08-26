@@ -91,6 +91,9 @@ class TestArmarReporte(unittest.TestCase):
         base.update(kw)
         return base
 
+    def _incap(self, ini, fin, dias, en_periodo=True):
+        return dict(fecha_inicio=ini, fecha_fin=fin, dias=dias, en_periodo=en_periodo)
+
     def test_sin_novedades_cobra_su_salario_completo(self):
         from app.services.nomina_report import armar_reporte
         r = armar_reporte([self._fila()], {}, SMLMV)[0]
@@ -99,11 +102,14 @@ class TestArmarReporte(unittest.TestCase):
         self.assertAlmostEqual(r["diferencia_vs_salario"], 0.0, places=2)
 
     def test_incapacidad_que_cruza_tramo_baja_el_neto(self):
-        """ANA lleva 88 días: de los 3 nuevos, 2 van al 66,67% y 1 al 50%."""
+        """ANA arrastra 88 días de un episodio CONTINUO: de los 3 nuevos,
+        2 van al 66,67% y 1 al 50%."""
         from app.services.nomina_report import armar_reporte
         r = armar_reporte(
             [self._fila(dias_incapacidad=3.0, valor_extras=31_250.0)],
-            {"1": 88.0}, SMLMV,
+            {"1": [self._incap("2026-05-01", "2026-07-27", 88.0, en_periodo=False),
+                   self._incap("2026-07-28", "2026-07-30", 3.0)]},
+            SMLMV,
         )[0]
         self.assertEqual(r["dias_efectivos"], 27)
         self.assertAlmostEqual(r["valor_incapacidad"], 2 * DIA_66 + 1 * DIA_50, places=2)
@@ -126,14 +132,18 @@ class TestArmarReporte(unittest.TestCase):
 
     def test_sin_salario_se_avisa_y_la_diferencia_queda_vacia(self):
         from app.services.nomina_report import armar_reporte
-        r = armar_reporte([self._fila(salario=None, dias_incapacidad=2.0)], {}, SMLMV)[0]
+        r = armar_reporte(
+            [self._fila(salario=None, dias_incapacidad=2.0)],
+            {"1": [self._incap("2026-08-01", "2026-08-02", 2.0)]}, SMLMV)[0]
         self.assertEqual(r["total_a_pagar"], 0.0)
         self.assertIsNone(r["diferencia_vs_salario"])
         self.assertIn("sin salario", r["observaciones"].lower())
 
     def test_novedades_por_encima_de_un_mes_no_dan_devengado_negativo(self):
         from app.services.nomina_report import armar_reporte
-        r = armar_reporte([self._fila(dias_incapacidad=40.0)], {}, SMLMV)[0]
+        r = armar_reporte(
+            [self._fila(dias_incapacidad=40.0)],
+            {"1": [self._incap("2026-08-01", "2026-09-09", 40.0)]}, SMLMV)[0]
         self.assertEqual(r["dias_efectivos"], 0)
         self.assertGreaterEqual(r["salario_devengado"], 0)
         self.assertIn("mas de un mes", r["observaciones"])
@@ -162,3 +172,57 @@ class TestLibroNomina(unittest.TestCase):
         self.assertTrue((ws.cell(1, 1).value or "").startswith("Prenómina de apoyo"))
         self.assertIn("ARL", ws.cell(1, 1).value)
         self.assertEqual(ws.cell(ws.max_row, 1).value, "TOTAL")
+
+
+class TestEpisodiosContinuos(unittest.TestCase):
+    """Dos incapacidades separadas son enfermedades distintas: cada una vuelve
+    a contar desde el día 1. Solo las continuas (prórrogas) acumulan."""
+
+    def _reg(self, ini, fin, dias, en_periodo=True):
+        return dict(fecha_inicio=ini, fecha_fin=fin, dias=dias, en_periodo=en_periodo)
+
+    def test_contiguas_son_un_solo_episodio(self):
+        from app.services.nomina_report import agrupar_episodios
+        eps = agrupar_episodios([self._reg("2026-08-01", "2026-08-05", 5),
+                                 self._reg("2026-08-06", "2026-08-08", 3)])
+        self.assertEqual(len(eps), 1)
+
+    def test_un_solo_dia_de_hueco_ya_separa(self):
+        from app.services.nomina_report import agrupar_episodios
+        eps = agrupar_episodios([self._reg("2026-08-01", "2026-08-05", 5),
+                                 self._reg("2026-08-07", "2026-08-09", 3)])
+        self.assertEqual(len(eps), 2)
+
+    def test_solapadas_son_un_episodio(self):
+        from app.services.nomina_report import agrupar_episodios
+        eps = agrupar_episodios([self._reg("2026-08-01", "2026-08-10", 10),
+                                 self._reg("2026-08-05", "2026-08-12", 8)])
+        self.assertEqual(len(eps), 1)
+
+    def test_separadas_no_llegan_al_tramo_del_50(self):
+        """El caso que motivó el cambio: 100 días en dos episodios distintos
+        se pagan todos al 66,67%, no al 50%."""
+        from app.services.nomina_report import liquidar_incapacidades_empleado
+        r = liquidar_incapacidades_empleado(
+            [self._reg("2026-01-01", "2026-02-19", 50),
+             self._reg("2026-06-01", "2026-07-20", 50)], SALARIO, SMLMV)
+        self.assertEqual(r["dias_50"], 0)
+        self.assertEqual(r["dias_66"], 100)
+        self.assertAlmostEqual(r["valor"], 100 * DIA_66, places=2)
+
+    def test_continuas_si_cruzan_al_50(self):
+        from app.services.nomina_report import liquidar_incapacidades_empleado
+        r = liquidar_incapacidades_empleado(
+            [self._reg("2026-01-01", "2026-02-19", 50),
+             self._reg("2026-02-20", "2026-04-10", 50)], SALARIO, SMLMV)
+        self.assertEqual(r["dias_66"], 90)
+        self.assertEqual(r["dias_50"], 10)
+        self.assertAlmostEqual(r["valor"], 90 * DIA_66 + 10 * DIA_50, places=2)
+
+    def test_lo_de_fuera_del_periodo_no_se_cobra_pero_acumula(self):
+        from app.services.nomina_report import liquidar_incapacidades_empleado
+        r = liquidar_incapacidades_empleado(
+            [self._reg("2026-05-01", "2026-07-27", 88, en_periodo=False),
+             self._reg("2026-07-28", "2026-07-30", 3)], SALARIO, SMLMV)
+        self.assertEqual(r["dias_66"] + r["dias_50"], 3)   # solo se cobran 3
+        self.assertEqual(r["dias_50"], 1)                   # pero arrastra el acumulado

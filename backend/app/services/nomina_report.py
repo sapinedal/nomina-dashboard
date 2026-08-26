@@ -18,7 +18,13 @@ Alcance y límites, deliberados y acordados con el área de nómina:
 - El piso legal de 1 SMLMV se aplica por día (SMLMV/30). Sin ese piso, un
   salario mínimo liquidado al 66,67% quedaría por debajo de lo que exige la
   norma.
+- Los días **solo se acumulan dentro de un mismo episodio continuo** (prórroga).
+  Dos incapacidades separadas por un día o más se liquidan de forma
+  independiente, cada una arrancando en el día 1. Sin diagnóstico en el dato,
+  la continuidad de fechas es el único criterio defendible: sumar todo el
+  historial empujaría al tramo del 50% a quien tuvo dos gripas en el año.
 """
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 # Días acumulados en que cambia el porcentaje.
@@ -98,7 +104,7 @@ def liquidar_incapacidad(
 
 def armar_reporte(
     filas: list,
-    dias_previos_por_cedula: dict,
+    incapacidades_por_cedula: dict,
     smlmv: float,
     pct_66: float = 0.6667,
     pct_50: float = 0.50,
@@ -108,6 +114,10 @@ def armar_reporte(
     Puro a proposito: recibe las filas ya consultadas y devuelve las filas ya
     calculadas, sin tocar la base de datos. Asi el reporte se puede probar
     entero sin levantar nada.
+
+    `incapacidades_por_cedula` trae los registros CON FECHAS para agrupar por
+    episodio: dos incapacidades separadas se liquidan independientes, cada una
+    desde el dia 1; solo las continuas acumulan.
 
     El neto se arma asi:
 
@@ -128,9 +138,9 @@ def armar_reporte(
         extras = float(fila.get("valor_extras") or 0)
         otros = float(fila.get("valor_otros_pagos") or 0)
 
-        liq = liquidar_incapacidad(
-            dias_previos_por_cedula.get(fila.get("cedula"), 0.0),
-            dias_inc, salario, smlmv, pct_66, pct_50,
+        liq = liquidar_incapacidades_empleado(
+            incapacidades_por_cedula.get(fila.get("cedula"), []),
+            salario, smlmv, pct_66, pct_50,
         )
 
         # Nunca menos de cero dias efectivos: si las novedades suman mas de 30
@@ -162,3 +172,114 @@ def armar_reporte(
             "observaciones": "; ".join(observaciones),
         })
     return salida
+
+
+def _a_fecha(valor) -> Optional[date]:
+    """Las fechas llegan como `date` desde PostgreSQL y como texto desde SQLite."""
+    if valor is None or valor == "":
+        return None
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    try:
+        return date.fromisoformat(str(valor)[:10])
+    except ValueError:
+        return None
+
+
+def agrupar_episodios(registros: list) -> list:
+    """Agrupa incapacidades en episodios continuos (prórrogas).
+
+    Dos registros pertenecen al mismo episodio si el segundo empieza el día
+    siguiente al fin del primero, o antes (solape). Un hueco de un día o más
+    abre un episodio nuevo, que vuelve a contar desde el día 1.
+
+    Devuelve una lista de listas, cada una ordenada por fecha de inicio. Los
+    registros sin fecha de inicio no se pueden encadenar: cada uno queda en su
+    propio episodio, que es el criterio conservador (no empuja a nadie a un
+    tramo peor por un dato incompleto).
+    """
+    con_fecha, sin_fecha = [], []
+    for r in registros:
+        (con_fecha if _a_fecha(r.get("fecha_inicio")) else sin_fecha).append(r)
+
+    con_fecha.sort(key=lambda r: _a_fecha(r["fecha_inicio"]))
+    episodios, actual, fin_actual = [], [], None
+
+    for r in con_fecha:
+        inicio = _a_fecha(r["fecha_inicio"])
+        dias = float(r.get("dias") or 0)
+        fin = _a_fecha(r.get("fecha_fin"))
+        if fin is None:
+            # Sin fecha final, se deduce de los días: un día de incapacidad
+            # empieza y termina el mismo día.
+            fin = inicio + timedelta(days=max(0, int(round(dias)) - 1))
+
+        if actual and fin_actual is not None and inicio <= fin_actual + timedelta(days=1):
+            actual.append(r)
+            fin_actual = max(fin_actual, fin)
+        else:
+            if actual:
+                episodios.append(actual)
+            actual, fin_actual = [r], fin
+
+    if actual:
+        episodios.append(actual)
+    episodios.extend([[r] for r in sin_fecha])
+    return episodios
+
+
+def liquidar_incapacidades_empleado(
+    registros: list,
+    salario_mensual: Optional[float],
+    smlmv: float,
+    pct_66: float = 0.6667,
+    pct_50: float = 0.50,
+) -> dict:
+    """Liquida las incapacidades de un empleado agrupándolas por episodio.
+
+    `registros` son TODAS las del empleado, con fechas, incluidas las de
+    periodos anteriores: hacen falta para saber si la del periodo es una
+    prórroga. Solo se cobra lo marcado con `en_periodo`; el resto únicamente
+    aporta días acumulados dentro de su episodio.
+    """
+    total, dias_66, dias_50, dias_sin_pago = 0.0, 0.0, 0.0, 0.0
+    observaciones, episodios_cobrados = [], 0
+
+    for episodio in agrupar_episodios(registros):
+        acumulados = 0.0
+        cobra_algo = False
+        for r in episodio:
+            dias = float(r.get("dias") or 0)
+            if r.get("en_periodo"):
+                liq = liquidar_incapacidad(acumulados, dias, salario_mensual, smlmv,
+                                           pct_66, pct_50)
+                total += liq["valor"]
+                dias_66 += liq["dias_66"]
+                dias_50 += liq["dias_50"]
+                dias_sin_pago += liq["dias_sin_pago"]
+                for o in liq["observaciones"]:
+                    if o not in observaciones:
+                        observaciones.append(o)
+                cobra_algo = True
+            acumulados += dias
+        if cobra_algo:
+            episodios_cobrados += 1
+            if len(episodio) > 1:
+                observaciones.append(
+                    f"episodio continuo de {len(episodio)} registros, {acumulados:g}d en total"
+                )
+
+    if episodios_cobrados > 1:
+        observaciones.insert(
+            0, f"{episodios_cobrados} episodios independientes: cada uno cuenta desde el dia 1"
+        )
+
+    return {
+        "valor": round(total, 2),
+        "dias_66": dias_66,
+        "dias_50": dias_50,
+        "dias_sin_pago": dias_sin_pago,
+        "observaciones": observaciones,
+    }

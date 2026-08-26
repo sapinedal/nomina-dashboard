@@ -1119,27 +1119,40 @@ def _sql_incap_predicate(alias: str = "n") -> str:
             f"OR LOWER({alias}.tipo_novedad) LIKE '%accidente%')")
 
 
-def get_dias_incapacidad_previos(db: Session, corte: Optional[str]) -> dict:
-    """Dias de incapacidad acumulados por cedula ANTES de `corte` (YYYY-MM-DD).
+def get_incapacidades_por_cedula(db: Session, filters: dict,
+                                 periodo: Optional[str] = None) -> dict:
+    """Incapacidades de cada empleado CON SUS FECHAS, para agrupar por episodio.
 
-    Necesario para ubicar cada incapacidad en su tramo: quien ya lleva 89 dias
-    no empieza otra vez en el 66,67%. Se acumula sobre todo el historial, que
-    es lo que se acordo; el limite conocido es que sin diagnostico no se puede
-    distinguir una prorroga de una enfermedad nueva.
+    No basta con sumar dias: dos incapacidades separadas por un hueco son
+    enfermedades distintas y cada una vuelve a contar desde el dia 1. Solo se
+    acumulan las continuas (prorrogas), y para saberlo hacen falta las fechas.
 
-    Sin `corte` no hay historial que acumular y se devuelve vacio.
+    Se trae el HISTORIAL completo, no solo el periodo, porque una incapacidad
+    del periodo puede ser la prorroga de otra del mes anterior. Cada registro
+    va marcado con `en_periodo`: los de fuera no se cobran, solo aportan dias
+    acumulados dentro de su episodio.
+
+    El filtro de area se mantiene (misma autorizacion que el resto); el de
+    periodo se retira a proposito, que es justo lo que da el historial.
     """
-    if not corte:
-        return {}
+    filtros_hist = {k: v for k, v in filters.items() if k != "periodo"}
+    extra_where, params = _panel_filters_sql(filtros_hist, full=False)
     sql = text(f"""
-        SELECT n.cedula, COALESCE(SUM(CAST(n.dias AS REAL)), 0) AS dias
+        SELECT n.cedula, n.fecha_inicio, n.fecha_fin, n.dias, n.periodo
         FROM novedades_nomina n
         WHERE n.es_valido = 1 AND n.unidad = 'dias' AND n.cedula IS NOT NULL
-          AND {_sql_incap_predicate('n')}
-          AND n.fecha_inicio < :corte
-        GROUP BY n.cedula
+          AND {_sql_incap_predicate('n')} {extra_where}
+        ORDER BY n.cedula, n.fecha_inicio
     """)
-    return {r.cedula: float(r.dias or 0) for r in db.execute(sql, {"corte": corte})}
+    por_cedula: dict = {}
+    for r in db.execute(sql, params):
+        por_cedula.setdefault(r.cedula, []).append({
+            "fecha_inicio": r.fecha_inicio,
+            "fecha_fin": r.fecha_fin,
+            "dias": float(r.dias or 0),
+            "en_periodo": (periodo is None) or (r.periodo == periodo),
+        })
+    return por_cedula
 
 
 def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
