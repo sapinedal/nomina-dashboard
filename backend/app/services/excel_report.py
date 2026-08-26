@@ -5,14 +5,18 @@ datos por medio, el libro se puede probar directamente. Antes estaba
 dentro de la ruta y cualquier test tenia que arrastrar todo el stack web.
 """
 import io
-from typing import List
+from typing import List, Optional
 
 
-def construir_libro_excel(filas: List[dict]) -> io.BytesIO:
+def construir_libro_excel(filas: List[dict], panel: Optional[str] = None) -> io.BytesIO:
     """Arma el .xlsx a partir de las filas ya calculadas.
 
     Separada de la ruta a proposito: asi se puede probar el libro sin
     levantar FastAPI ni una base de datos.
+
+    Sin `panel` se arma el libro general: una hoja consolidada mas las dos
+    segregadas. Con `panel` las filas ya vienen acotadas a una sola unidad, asi
+    que se entrega UNA hoja: las otras dos saldrian vacias o duplicadas.
     """
     import xlsxwriter
     from datetime import date as _date, datetime as _datetime
@@ -103,14 +107,18 @@ def construir_libro_excel(filas: List[dict]) -> io.BytesIO:
                 c += 1
             ws.write_number(r, c, total_valor, tot_num_fmt)
 
-    horas = [f for f in filas if f.get("unidad") == "horas"]
-    dias_ = [f for f in filas if f.get("unidad") == "dias"]
-
-    # Hoja consolidada: horas y dias en columnas distintas, nunca en la misma.
-    _hoja("Novedades", filas, [("Horas", "horas"), ("Días", "dias")])
-    # Y las dos vistas segregadas que pidio el area de nomina.
-    _hoja("Horas extras y recargos", horas, [("Horas", "horas")])
-    _hoja("Ausencias y días", dias_, [("Días", "dias")])
+    if panel == "horas-extras":
+        _hoja("Horas extras y recargos", filas, [("Horas", "horas")])
+    elif panel == "ausentismo":
+        _hoja("Ausencias y días", filas, [("Días", "dias")])
+    else:
+        horas = [f for f in filas if f.get("unidad") == "horas"]
+        dias_ = [f for f in filas if f.get("unidad") == "dias"]
+        # Hoja consolidada: horas y dias en columnas distintas, nunca en la misma.
+        _hoja("Novedades", filas, [("Horas", "horas"), ("Días", "dias")])
+        # Y las dos vistas segregadas que pidio el area de nomina.
+        _hoja("Horas extras y recargos", horas, [("Horas", "horas")])
+        _hoja("Ausencias y días", dias_, [("Días", "dias")])
 
     workbook.close()
     output.seek(0)
