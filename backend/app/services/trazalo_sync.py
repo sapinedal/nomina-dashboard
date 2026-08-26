@@ -26,8 +26,6 @@ pasados sincronizados por Trazalo es una aproximación con el roster de hoy.
 from collections import defaultdict
 from typing import Optional
 
-import psycopg2
-import psycopg2.extras
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -70,6 +68,12 @@ def _clean_cedula(raw) -> Optional[str]:
 
 
 def _get_connection():
+    # El driver se importa aqui y no arriba a proposito: asi el resto del modulo
+    # —la logica que ya recibe los datos y solo los vuelca en la BD local— se
+    # puede importar y probar sin tener psycopg2 instalado.
+    import psycopg2
+    import psycopg2.extras
+
     if not settings.TRAZALO_DB_HOST:
         raise RuntimeError("TRAZALO_DB_HOST no configurado en el entorno")
     conn = psycopg2.connect(
@@ -110,6 +114,93 @@ def _sede_canon(raw: Optional[str]) -> Optional[str]:
     return canon or None
 
 
+
+def sincronizar_roster(db, roster: list) -> dict:
+    """Vuelca el roster de Trazalo en `salarios_empleados`.
+
+    Se guarda el roster completo y no solo el salario: el reporte de nomina
+    necesita saber que empleados existen en cada area aunque no tengan ninguna
+    novedad en el periodo. `activo` viene del WHERE de la consulta del roster
+    (u.activo = true), asi que todo lo que llega aqui esta activo.
+
+    **La identidad se sincroniza tenga o no salario.** Antes toda la fila se
+    descartaba con `if salario is not None`, y eso dejaba en el reporte filas
+    con cedula y salario viejo pero con nombre, area y cargo vacios: empleados
+    activos en Trazalo a los que ese sistema no les expone salario (el grueso
+    del personal clinico) y que por eso nunca recibian su identidad. Bug
+    reportado el 2026-08-26 sobre el Excel de produccion.
+
+    Por eso hay dos caminos y no uno:
+
+    - Con salario: UPSERT, que puede crear la fila.
+    - Sin salario: UPDATE de la identidad sobre la fila que ya exista. No se
+      inserta porque `salarios_empleados.salario` es NOT NULL; un empleado sin
+      salario y sin fila previa sigue sin aparecer en la prenomina, que es la
+      decision ya tomada de no liquidar con salarios inventados.
+
+    Devuelve el conteo de cada camino, para que quede en el log que se hizo.
+    """
+    from sqlalchemy import text
+
+    con_salario, sin_salario = [], []
+    for u in roster:
+        cedula = _clean_cedula(u["cedula"])
+        if not cedula:
+            continue
+        # _area_upper es la MISMA normalizacion que se aplica al area de cada
+        # novedad. Sin ella el area del roster no casaria con las areas
+        # asignadas a un analista y el reporte le saldria vacio.
+        identidad = {
+            "cedula": cedula,
+            "nombre": u.get("nombre"),
+            "area": _area_upper(u.get("area")),
+            "sede": u.get("sede"),
+            "cargo": u.get("cargo"),
+        }
+        salario = u.get("salario")
+        if salario is None:
+            sin_salario.append(identidad)
+            continue
+        try:
+            con_salario.append({**identidad, "salario": float(salario)})
+        except (ValueError, TypeError):
+            # Un salario ilegible no puede costarle la identidad al empleado.
+            sin_salario.append(identidad)
+
+    if con_salario:
+        sql_upsert = text("""
+            INSERT INTO salarios_empleados (cedula, salario, nombre, area, sede, cargo, activo)
+            VALUES (:cedula, :salario, :nombre, :area, :sede, :cargo, 1)
+            ON CONFLICT (cedula)
+            DO UPDATE SET salario = EXCLUDED.salario,
+                          nombre  = EXCLUDED.nombre,
+                          area    = EXCLUDED.area,
+                          sede    = EXCLUDED.sede,
+                          cargo   = EXCLUDED.cargo,
+                          activo  = 1
+        """)
+        for item in con_salario:
+            db.execute(sql_upsert, item)
+
+    if sin_salario:
+        # Solo identidad: el salario que ya estuviera guardado NO se toca, es el
+        # unico que hay para liquidar a esa persona.
+        sql_identidad = text("""
+            UPDATE salarios_empleados
+               SET nombre = :nombre, area = :area, sede = :sede,
+                   cargo = :cargo, activo = 1
+             WHERE cedula = :cedula
+        """)
+        for item in sin_salario:
+            db.execute(sql_identidad, item)
+
+    if con_salario or sin_salario:
+        db.commit()
+        logger.info("trazalo_roster_sincronizado",
+                    con_salario=len(con_salario), sin_salario=len(sin_salario))
+    return {"con_salario": len(con_salario), "sin_salario": len(sin_salario)}
+
+
 def sync_trazalo(db: Session) -> dict:
     """Sincroniza novedades APROBADAS de Trazalo hacia novedades_nomina,
     reemplazando (por período) los registros que venían de Excel."""
@@ -122,6 +213,8 @@ def sync_trazalo(db: Session) -> dict:
     except Exception as e:
         logger.error("trazalo_connection_error", error=str(e))
         return {"status": "error", "error": str(e)}
+
+    import psycopg2.extras  # ver el comentario de _get_connection
 
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
@@ -165,50 +258,8 @@ def sync_trazalo(db: Session) -> dict:
     cur.close()
     conn.close()
 
-    # Sincronizar salarios en la tabla local salarios_empleados
-    from sqlalchemy import text
-    salarios_a_sincronizar = []
-    for u in roster:
-        cedula = _clean_cedula(u["cedula"])
-        salario = u.get("salario")
-        if cedula and salario is not None:
-            try:
-                salario_val = float(salario)
-                salarios_a_sincronizar.append({
-                    "cedula": cedula,
-                    "salario": salario_val,
-                    "nombre": u.get("nombre"),
-                    # _area_upper es la MISMA normalizacion que se aplica al
-                    # area de cada novedad. Sin ella el area del roster no
-                    # casaria con las areas asignadas a un analista y el
-                    # reporte le saldria vacio.
-                    "area": _area_upper(u.get("area")),
-                    "sede": u.get("sede"),
-                    "cargo": u.get("cargo"),
-                })
-            except (ValueError, TypeError):
-                continue
-
-    if salarios_a_sincronizar:
-        # Se guarda el roster completo, no solo el salario: el reporte de nomina
-        # necesita saber que empleados existen en cada area aunque no tengan
-        # ninguna novedad en el periodo. `activo` viene del WHERE de la consulta
-        # de arriba (u.activo = true), asi que todo lo que llega esta activo.
-        sql_upsert = text("""
-            INSERT INTO salarios_empleados (cedula, salario, nombre, area, sede, cargo, activo)
-            VALUES (:cedula, :salario, :nombre, :area, :sede, :cargo, 1)
-            ON CONFLICT (cedula)
-            DO UPDATE SET salario = EXCLUDED.salario,
-                          nombre  = EXCLUDED.nombre,
-                          area    = EXCLUDED.area,
-                          sede    = EXCLUDED.sede,
-                          cargo   = EXCLUDED.cargo,
-                          activo  = 1
-        """)
-        for item in salarios_a_sincronizar:
-            db.execute(sql_upsert, item)
-        db.commit()
-        logger.info("trazalo_salarios_sincronizados", total=len(salarios_a_sincronizar))
+    # Sincronizar el roster en la tabla local salarios_empleados
+    sincronizar_roster(db, roster)
 
     por_periodo: dict[str, list] = defaultdict(list)
     for f in filas:
