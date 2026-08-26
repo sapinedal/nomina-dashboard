@@ -14,6 +14,7 @@ from app.models.user import User
 from app.services.auth_service import get_user_areas, require_permission
 from app.services.permissions import PERM_EXPORT_EXCEL, PERM_EXPORT_PDF
 from app.services import dashboard_service as svc
+from app.services.excel_report import construir_libro_excel
 
 router = APIRouter(prefix="/api/export", tags=["Exportación"])
 
@@ -28,8 +29,6 @@ async def export_excel(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission(PERM_EXPORT_EXCEL)),
 ):
-    import xlsxwriter
-
     filters = {
         "fecha_inicio": fecha_inicio,
         "fecha_fin": fecha_fin,
@@ -39,52 +38,9 @@ async def export_excel(
         "cedula": None,
         "_allowed_areas": get_user_areas(current_user),
     }
-    result = svc.get_table_data(db, filters, page=1, page_size=100_000)
-
-    output = io.BytesIO()
-    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
-    ws = workbook.add_worksheet("Novedades")
-
-    # Estilos
-    header_fmt = workbook.add_format({
-        "bold": True, "bg_color": "#2C4770", "font_color": "white",
-        "border": 1, "align": "center",
-    })
-    date_fmt = workbook.add_format({"num_format": "dd/mm/yyyy"})
-    money_fmt = workbook.add_format({"num_format": "#,##0.00"})
-
-    headers = [
-        "Cédula", "Nombre Empleado", "Área", "Cargo",
-        "Tipo Novedad", "Fecha Inicio", "Fecha Fin",
-        "Días", "Valor", "Período", "Estado",
-        "Archivo Origen", "Hoja",
-    ]
-    keys = [
-        "cedula", "nombre_empleado", "area", "cargo",
-        "tipo_novedad", "fecha_inicio", "fecha_fin",
-        "dias", "valor", "periodo", "estado",
-        "archivo_origen", "hoja_origen",
-    ]
-
-    for col, h in enumerate(headers):
-        ws.write(0, col, h, header_fmt)
-        ws.set_column(col, col, 20)
-
-    for row_idx, row in enumerate(result.data, start=1):
-        for col_idx, key in enumerate(keys):
-            val = row.get(key)
-            if val is None:
-                ws.write_blank(row_idx, col_idx, None)
-            elif key in ("fecha_inicio", "fecha_fin") and val:
-                ws.write(row_idx, col_idx, val, date_fmt)
-            elif key == "valor" and val is not None:
-                ws.write_number(row_idx, col_idx, float(val), money_fmt)
-            else:
-                ws.write(row_idx, col_idx, str(val))
-
-    workbook.close()
-    output.seek(0)
-
+    # Trae categoria y valor ya calculados con las mismas expresiones que
+    # los paneles: el campo `valor` de la tabla se guarda nulo en la carga.
+    output = construir_libro_excel(svc.get_export_rows(db, filters))
     filename = f"novedades_nomina_{periodo or 'todos'}.xlsx"
     return StreamingResponse(
         output,
