@@ -3,12 +3,10 @@ NóminaBoard - API Principal
 FastAPI + PostgreSQL + APScheduler
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
 import os
 
 from app.config import settings
@@ -20,55 +18,6 @@ from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
 from app.routers import auth, dashboard, execution, users, export
 
 logger = get_logger(__name__)
-
-
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """DEF-0004: cabeceras de endurecimiento (también sin nginx delante)."""
-
-    async def dispatch(self, request: Request, call_next):
-        response: Response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault(
-            "Permissions-Policy", "geolocation=(), microphone=(), camera=()"
-        )
-        response.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "font-src 'self' https://cdn.jsdelivr.net data:; "
-            "img-src 'self' data:; "
-            "connect-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'",
-        )
-        if settings.COOKIE_SECURE:
-            response.headers.setdefault(
-                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
-            )
-        return response
-
-
-def _docs_url():
-    # DEF-0002: solo con flag explícito.
-    if settings.EXPOSE_OPENAPI:
-        return "/api/docs"
-    return None
-
-
-def _redoc_url():
-    if settings.EXPOSE_OPENAPI:
-        return "/api/redoc"
-    return None
-
-
-def _openapi_url():
-    if settings.EXPOSE_OPENAPI:
-        return "/api/openapi.json"
-    return None
 
 
 def seed_admin_user():
@@ -133,9 +82,9 @@ Sistema de tableros estadísticos para Novedades de Nómina.
 - Exportación a Excel y PDF
 - Historial completo de ejecuciones
     """,
-    docs_url=_docs_url(),
-    redoc_url=_redoc_url(),
-    openapi_url=_openapi_url(),
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
 
@@ -152,7 +101,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(SecurityHeadersMiddleware)
 
 # Routers
 app.include_router(auth.router)
@@ -173,13 +121,11 @@ async def health_check():
 
 @app.get("/api", tags=["Sistema"])
 async def api_info():
-    info = {
+    return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
+        "docs": "/api/docs",
     }
-    if settings.EXPOSE_OPENAPI:
-        info["docs"] = "/api/docs"
-    return info
 
 
 # Servir el frontend desde /frontend al final para no bloquear las rutas API

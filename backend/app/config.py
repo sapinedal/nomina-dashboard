@@ -37,12 +37,6 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Sesión en cookies HttpOnly (DEF-0003). Secure=true requiere HTTPS (DEF-0001).
-    COOKIE_SECURE: bool = True
-    COOKIE_SAMESITE: str = "lax"
-    # OpenAPI/docs solo con flag explícito (DEF-0002).
-    EXPOSE_OPENAPI: bool = False
-
     # Contraseña del admin sembrado en el PRIMER arranque (BD sin usuario admin).
     # Solo se usa al crear el admin; nunca sobrescribe la contraseña de un admin
     # existente. Configurar en el .env de producción; el default es solo para
