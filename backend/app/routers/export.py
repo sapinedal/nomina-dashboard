@@ -12,9 +12,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
 from app.services.auth_service import get_user_areas, require_permission
-from app.services.permissions import PERM_EXPORT_EXCEL, PERM_EXPORT_PDF
+from app.services.permissions import PERM_EXPORT_EXCEL, PERM_EXPORT_PDF, PERM_REPORTE_NOMINA
 from app.services import dashboard_service as svc
-from app.services.excel_report import construir_libro_excel
+from app.services.excel_report import construir_libro_excel, construir_libro_nomina
+from app.services.nomina_report import armar_reporte
+from app.config import settings
+from fastapi import HTTPException, status
 
 router = APIRouter(prefix="/api/export", tags=["Exportación"])
 
@@ -55,6 +58,61 @@ async def export_excel(
         panel_norm, "novedades_nomina"
     )
     filename = f"{base}_{periodo or 'todos'}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/nomina", summary="Reporte de nómina por áreas (incluye salarios)")
+async def export_reporte_nomina(
+    area: Optional[List[str]] = Query(
+        None,
+        description="Áreas a incluir, repetible. Si se omite, se usan las áreas "
+                    "asignadas al usuario.",
+    ),
+    periodo: Optional[str] = Query(None, description="YYYY-MM"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission(PERM_REPORTE_NOMINA)),
+):
+    """Prenómina por empleado: salario, novedades y neto del periodo.
+
+    Sobre las áreas no hace falta logica especial: _effective_areas ya cruza la
+    seleccion con las areas autorizadas del usuario. Sin seleccion devuelve
+    TODAS las suyas, que es exactamente "las areas que tenga a cargo"; un admin
+    sin seleccion las obtiene todas; y un usuario restringido sin areas
+    asignadas obtiene cero filas (fail-closed).
+    """
+    if not settings.SMLMV_MENSUAL:
+        # Preferible fallar visible que liquidar con una cifra inventada.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Falta configurar SMLMV_MENSUAL en el servidor: es el piso legal "
+                   "para liquidar incapacidades y sin él el reporte daría cifras "
+                   "por debajo de la norma.",
+        )
+
+    filters = {
+        "periodo": periodo,
+        "area": area,
+        "_allowed_areas": get_user_areas(current_user),
+    }
+    filas = svc.get_reporte_nomina_rows(db, filters)
+
+    # Con fechas, para agrupar por episodio: dos incapacidades separadas cuentan
+    # cada una desde el dia 1; solo las continuas (prorrogas) acumulan.
+    incapacidades = svc.get_incapacidades_por_cedula(db, filters, periodo)
+
+    filas = armar_reporte(
+        filas, incapacidades,
+        smlmv=float(settings.SMLMV_MENSUAL),
+        pct_66=settings.INCAP_PCT_DIAS_1_90,
+        pct_50=settings.INCAP_PCT_DIAS_91_180,
+    )
+
+    output = construir_libro_nomina(filas, periodo)
+    filename = f"reporte_nomina_{periodo or 'todos'}.xlsx"
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

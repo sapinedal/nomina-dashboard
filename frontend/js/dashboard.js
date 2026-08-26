@@ -51,6 +51,10 @@ function initUserUI() {
   if (btnExcel) btnExcel.style.display = hasPermission('export_excel') ? 'flex' : 'none';
   const btnPdf = document.getElementById('btn-export-pdf');
   if (btnPdf) btnPdf.style.display = hasPermission('export_pdf') ? 'flex' : 'none';
+  // Expone salarios individuales, por eso tiene permiso propio y no reusa
+  // export_excel: se puede quitar sin tocar las demas exportaciones.
+  const btnNomina = document.getElementById('btn-export-nomina');
+  if (btnNomina) btnNomina.style.display = hasPermission('reporte_nomina') ? 'flex' : 'none';
 }
 
 // ── Dark mode ─────────────────────────────────────────────────
@@ -1195,6 +1199,23 @@ document.getElementById('btn-export-excel')?.addEventListener('click', async () 
     await API.downloadExcel({ ...currentFilters, panel: panelExportable });
   } catch (e) {
     showToast('No se pudo exportar a Excel: ' + e.message, 'danger');
+  }
+});
+
+document.getElementById('btn-export-nomina')?.addEventListener('click', async () => {
+  if (!hasPermission('reporte_nomina')) {
+    showToast('Su perfil no permite exportar el reporte de nómina', 'warning');
+    return;
+  }
+  try {
+    // Sin áreas marcadas el backend usa las asignadas al usuario, así que aquí
+    // basta con mandar la selección del checklist tal cual.
+    await API.downloadReporteNomina({
+      area: _areasParaFiltro(),
+      periodo: currentFilters.periodo || null,
+    });
+  } catch (e) {
+    showToast('No se pudo exportar el reporte de nómina: ' + e.message, 'danger');
   }
 });
 

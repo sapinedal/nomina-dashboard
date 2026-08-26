@@ -123,3 +123,98 @@ def construir_libro_excel(filas: List[dict], panel: Optional[str] = None) -> io.
     workbook.close()
     output.seek(0)
     return output
+
+
+def construir_libro_nomina(filas: List[dict], periodo: Optional[str] = None) -> io.BytesIO:
+    """Reporte de nomina: una fila por empleado, con su salario y el neto.
+
+    Las filas llegan ya liquidadas de nomina_report.armar_reporte. Aqui solo se
+    dibuja: ningun calculo de dinero vive en esta funcion.
+    """
+    import xlsxwriter
+
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    ws = workbook.add_worksheet("Reporte de nómina")
+
+    header_fmt = workbook.add_format({
+        "bold": True, "bg_color": "#2C4770", "font_color": "white",
+        "border": 1, "align": "center", "valign": "vcenter", "text_wrap": True,
+    })
+    aviso_fmt = workbook.add_format({"italic": True, "font_color": "#8A6D3B", "text_wrap": True})
+    money_fmt = workbook.add_format({"num_format": "#,##0.00"})
+    qty_fmt = workbook.add_format({"num_format": "#,##0.00"})
+    neg_fmt = workbook.add_format({"num_format": "#,##0.00", "font_color": "#A9373B"})
+    tot_lbl = workbook.add_format({"bold": True, "top": 1})
+    tot_num = workbook.add_format({"bold": True, "top": 1, "num_format": "#,##0.00"})
+
+    # El reporte no reemplaza una liquidacion oficial: conviene que quien lo
+    # abra lo lea antes que las cifras.
+    aviso = ("Prenómina de apoyo. No incluye aportes, retenciones, auxilio de transporte "
+             "ni prestaciones. Las incapacidades se liquidan como origen común (EPS): un "
+             "accidente laboral aparecerá por debajo del 100% que paga la ARL.")
+    ws.merge_range(0, 0, 0, 13, aviso, aviso_fmt)
+    ws.set_row(0, 28)
+    if periodo:
+        ws.write(1, 0, f"Período: {periodo}")
+
+    FILA_CAB = 3
+    columnas = [
+        ("Cédula", "cedula", "txt"), ("Nombre Empleado", "nombre_empleado", "txt"),
+        ("Área", "area", "txt"), ("Cargo", "cargo", "txt"),
+        ("Salario base", "salario", "money"),
+        ("Días incapacidad", "dias_incapacidad", "qty"),
+        ("Días no remunerados", "dias_no_remunerados", "qty"),
+        ("Días efectivos", "dias_efectivos", "qty"),
+        ("Salario devengado", "salario_devengado", "money"),
+        ("Horas extras y recargos", "valor_extras", "money"),
+        ("Valor incapacidad", "valor_incapacidad", "money"),
+        ("Otros pagos", "valor_otros_pagos", "money"),
+        ("Total a pagar", "total_a_pagar", "money"),
+        ("Diferencia vs salario", "diferencia_vs_salario", "dif"),
+        ("Observaciones", "observaciones", "txt"),
+    ]
+    for c, (titulo, _, _) in enumerate(columnas):
+        ws.write(FILA_CAB, c, titulo, header_fmt)
+        ws.set_column(c, c, 30 if titulo == "Observaciones" else (24 if c in (1, 2, 3) else 16))
+    ws.freeze_panes(FILA_CAB + 1, 0)
+    if filas:
+        ws.autofilter(FILA_CAB, 0, FILA_CAB + len(filas), len(columnas) - 1)
+
+    sumables = {"salario", "salario_devengado", "valor_extras", "valor_incapacidad",
+                "valor_otros_pagos", "total_a_pagar", "diferencia_vs_salario",
+                "dias_incapacidad", "dias_no_remunerados"}
+    totales = {k: 0.0 for k in sumables}
+
+    for i, fila in enumerate(filas):
+        r = FILA_CAB + 1 + i
+        for c, (_, clave, tipo) in enumerate(columnas):
+            v = fila.get(clave)
+            if v is None or v == "":
+                ws.write_blank(r, c, None)
+                continue
+            if tipo == "money":
+                ws.write_number(r, c, float(v), money_fmt)
+            elif tipo == "qty":
+                ws.write_number(r, c, float(v), qty_fmt)
+            elif tipo == "dif":
+                ws.write_number(r, c, float(v), neg_fmt if float(v) < 0 else money_fmt)
+            else:
+                ws.write(r, c, str(v))
+            if clave in sumables:
+                totales[clave] += float(v)
+
+    if filas:
+        r = FILA_CAB + 1 + len(filas)
+        ws.write(r, 0, "TOTAL", tot_lbl)
+        for c, (_, clave, tipo) in enumerate(columnas):
+            if c == 0:
+                continue
+            if clave in sumables:
+                ws.write_number(r, c, totales[clave], tot_num)
+            else:
+                ws.write_blank(r, c, None, tot_lbl)
+
+    workbook.close()
+    output.seek(0)
+    return output

@@ -210,6 +210,7 @@ const API = {
 
   downloadExcel: (params = {}) => downloadFile('/api/export/excel?' + new URLSearchParams(clean(params))),
   downloadPDF:   (params = {}) => downloadFile('/api/export/pdf?'   + new URLSearchParams(clean(params))),
+  downloadReporteNomina: (params = {}) => downloadFile('/api/export/nomina?' + new URLSearchParams(clean(params))),
 };
 
 /** Permisos por perfil. Espejo de backend/app/services/permissions.py, usado
