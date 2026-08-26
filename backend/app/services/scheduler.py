@@ -41,17 +41,15 @@ def _etl_job():
 
 
 def _trazalo_job():
-    """Sincroniza novedades de Trazalo (PostgreSQL) hacia novedades_nomina."""
+    """Sincroniza novedades de Trazalo (PostgreSQL) hacia novedades_nomina.
+
+    Pasa por trazalo_job para compartir candado y estado con el disparo manual
+    del panel: si el admin acaba de pulsar «Sincronizar Trazalo», este ciclo se
+    omite en vez de correr en paralelo pisando los DELETE/INSERT por período."""
+    from app.services import trazalo_job
     logger.info("trazalo_scheduler_job_started")
-    db: Session = SessionLocal()
-    try:
-        from app.services.trazalo_sync import sync_trazalo
-        result = sync_trazalo(db)
-        logger.info("trazalo_scheduler_job_completed", **result)
-    except Exception as e:
-        logger.error("trazalo_scheduler_job_error", error=str(e))
-    finally:
-        db.close()
+    result = trazalo_job.run_now("scheduler")
+    logger.info("trazalo_scheduler_job_completed", **result)
 
 
 def _on_job_executed(event):
@@ -135,12 +133,9 @@ def trigger_manual_etl(db: Session, username: str):
     fuente autorizada de los períodos que ya sincronizó (el ETL de Excel borra
     e inserta por archivo_origen, sin distinguir origen Excel/Trazalo)."""
     from app.services.excel_processor import run_etl_process
-    from app.services.trazalo_sync import sync_trazalo
+    from app.services import trazalo_job
     logger.info("manual_etl_triggered", by=username)
     result = run_etl_process(db, trigger_type="manual", triggered_by=username)
-    try:
-        trazalo_result = sync_trazalo(db)
-        logger.info("manual_trazalo_sync", **trazalo_result)
-    except Exception as e:
-        logger.error("manual_trazalo_sync_error", error=str(e))
+    trazalo_result = trazalo_job.run_now(username)
+    logger.info("manual_trazalo_sync", **trazalo_result)
     return result

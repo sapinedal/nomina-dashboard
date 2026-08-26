@@ -23,4 +23,9 @@ RUN mkdir -p /app/logs
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Sin --reload: es una bandera de desarrollo. Con el bind mount de
+# docker-compose (./backend:/app), cualquier escritura de un .py reinicia el
+# proceso y mata las peticiones en vuelo — incluida la sincronización con
+# Trazalo, que corre en un hilo de fondo y perdería su estado a mitad.
+# Para desarrollo local, sobrescribir el comando en docker-compose.override.yml.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

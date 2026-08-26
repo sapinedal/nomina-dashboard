@@ -144,13 +144,19 @@ Sistema de tableros estadísticos para Novedades de Nómina.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-# CORS
+# CORS. En el despliegue normal el frontend se sirve desde el mismo origen (el
+# nginx del compose enruta /api/ al backend), así que ni siquiera hay preflight;
+# esta configuración cubre el caso de servir el frontend aparte.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Sin esto, `downloadFile` no puede leer el nombre del archivo en un
+    # despliegue cross-origin: el navegador oculta todas las cabeceras de
+    # respuesta que no estén en la lista blanca por defecto.
+    expose_headers=["Content-Disposition"],
 )
 app.add_middleware(SecurityHeadersMiddleware)
 

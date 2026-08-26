@@ -33,6 +33,63 @@ function formatApiError(payload, fallback = 'Error inesperado') {
   return fallback;
 }
 
+/** Envuelve fetch para que un fallo de RED no llegue al usuario como el
+ *  opaco "Failed to fetch" del navegador.
+ *
+ *  fetch() solo rechaza cuando la petición nunca obtuvo una respuesta HTTP:
+ *  servidor caído, proxy que corta la conexión a mitad, DNS, mixed content.
+ *  El mensaje nativo (`TypeError: Failed to fetch` en Chrome, `NetworkError...`
+ *  en Firefox) no trae ni status ni cuerpo, así que se traduce a algo
+ *  accionable y se marca con `isNetworkError` para que quien llama pueda
+ *  distinguirlo de un error de negocio del backend. */
+async function fetchOrNetworkError(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (cause) {
+    const err = new Error(
+      'No se obtuvo respuesta del servidor (error de red). Verifique su conexión; ' +
+      'si el problema persiste, el servicio puede estar reiniciándose o la ' +
+      'petición fue cortada por el proxy.',
+    );
+    err.isNetworkError = true;
+    err.cause = cause;
+    throw err;
+  }
+}
+
+/** Error de una respuesta HTTP no-OK, conservando status y cuerpo.
+ *
+ *  Se lee como texto y luego se intenta parsear: los errores del proxy (502,
+ *  504) llegan como HTML, y `res.json()` los descartaba dejando un mensaje sin
+ *  ninguna pista de qué había pasado. */
+async function httpError(res) {
+  const raw = await res.text().catch(() => '');
+  let detalle = '';
+  try {
+    detalle = formatApiError(JSON.parse(raw), '');
+  } catch {
+    // Cuerpo no-JSON: una página de error del proxy no le dice nada al
+    // usuario, así que solo se aprovecha si es texto plano corto.
+    detalle = raw.trim().startsWith('<') ? '' : raw.trim().slice(0, 200);
+  }
+  // El `detail` de un 4xx ya es un mensaje pensado para el usuario; añadirle el
+  // código solo lo ensucia. En un 5xx, en cambio, el código es lo único
+  // accionable (distingue un fallo de la app de un 502/504 del proxy).
+  const err = new Error(
+    detalle && res.status < 500
+      ? detalle
+      : [`Error HTTP ${res.status}`, res.statusText, detalle].filter(Boolean).join(' — '),
+  );
+  err.status = res.status;
+  return err;
+}
+
+/** Mensaje listo para un toast a partir de cualquier error de este módulo. */
+function describeError(err) {
+  if (!err) return 'error desconocido';
+  return err.message || String(err);
+}
+
 function storeSession({ expires_in, user } = {}) {
   // Solo metadatos no sensibles en sessionStorage (DEF-0003).
   if (expires_in != null) {
@@ -83,7 +140,7 @@ function scheduleTokenRefresh() {
 function refreshAccessToken() {
   if (refreshInFlight) return refreshInFlight;
 
-  refreshInFlight = fetch(`${API_BASE}/api/auth/refresh`, {
+  refreshInFlight = fetchOrNetworkError(`${API_BASE}/api/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '{}',
@@ -98,9 +155,15 @@ function refreshAccessToken() {
       return data.access_token;
     })
     .catch((err) => {
-      clearSession();
-      if (!isLoginPage()) {
-        window.location.href = 'login.html';
+      // Un fallo de red no significa que la sesión haya caducado: cerrarla
+      // expulsaba al usuario al login por un corte momentáneo (o porque el
+      // backend estaba ocupado). Solo se cierra ante un rechazo real del
+      // servidor.
+      if (!err || !err.isNetworkError) {
+        clearSession();
+        if (!isLoginPage()) {
+          window.location.href = 'login.html';
+        }
       }
       throw err;
     })
@@ -121,7 +184,7 @@ async function apiFetch(endpoint, options = {}) {
     ...(options.headers || {}),
   };
 
-  let res = await fetch(`${API_BASE}${endpoint}`, {
+  let res = await fetchOrNetworkError(`${API_BASE}${endpoint}`, {
     ...options,
     headers,
     credentials: 'include',
@@ -130,7 +193,7 @@ async function apiFetch(endpoint, options = {}) {
   if (res.status === 401 && sessionStorage.getItem('token_expires_at')) {
     try {
       await refreshAccessToken();
-      res = await fetch(`${API_BASE}${endpoint}`, {
+      res = await fetchOrNetworkError(`${API_BASE}${endpoint}`, {
         ...options,
         headers,
         credentials: 'include',
@@ -154,8 +217,7 @@ async function apiFetch(endpoint, options = {}) {
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: `Error HTTP ${res.status}` }));
-    throw new Error(formatApiError(err, `Error ${res.status}`));
+    throw await httpError(res);
   }
 
   if (res.status === 204) return null;
@@ -165,15 +227,14 @@ async function apiFetch(endpoint, options = {}) {
 const API = {
   login: (username, password) => {
     const body = new URLSearchParams({ username, password });
-    return fetch(`${API_BASE}/api/auth/token`, {
+    return fetchOrNetworkError(`${API_BASE}/api/auth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
       credentials: 'include',
     }).then(async (r) => {
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(formatApiError(data, 'Usuario o contraseña incorrectos'));
-      return data;
+      if (!r.ok) throw await httpError(r);
+      return r.json();
     });
   },
   me: () => apiFetch('/api/auth/me'),
@@ -201,6 +262,7 @@ const API = {
   getExecution:  (id)          => apiFetch(`/api/execution/${id}`),
   triggerETL:    ()            => apiFetch('/api/execution/trigger', { method: 'POST' }),
   triggerTrazalo:()            => apiFetch('/api/execution/trigger-trazalo', { method: 'POST' }),
+  getTrazaloStatus:()          => apiFetch('/api/execution/trazalo-status'),
 
   users:         '/api/users/',
   getUsers:      ()            => apiFetch('/api/users/'),
@@ -246,12 +308,12 @@ function hasPermission(code) {
  *  backend responde 403 por permisos, un enlace directo abriría una pestaña
  *  con JSON crudo en lugar de avisar en la interfaz. */
 async function downloadFile(endpoint) {
-  let res = await fetch(`${API_BASE}${endpoint}`, { credentials: 'include' });
+  let res = await fetchOrNetworkError(`${API_BASE}${endpoint}`, { credentials: 'include' });
 
   if (res.status === 401 && sessionStorage.getItem('token_expires_at')) {
     try {
       await refreshAccessToken();
-      res = await fetch(`${API_BASE}${endpoint}`, { credentials: 'include' });
+      res = await fetchOrNetworkError(`${API_BASE}${endpoint}`, { credentials: 'include' });
     } catch (err) {
       // Mismo motivo que abajo: no resolver como si hubiera ido bien.
       throw err;
@@ -271,8 +333,7 @@ async function downloadFile(endpoint) {
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: `Error HTTP ${res.status}` }));
-    throw new Error(formatApiError(err, `Error ${res.status}`));
+    throw await httpError(res);
   }
 
   const match = (res.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)"?/i);

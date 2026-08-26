@@ -179,10 +179,11 @@ nomina-dashboard/
 │   │   │   ├── dashboard.py     ← GET  /api/dashboard/*
 │   │   │   ├── execution.py     ← GET/POST /api/execution/*
 │   │   │   ├── users.py         ← CRUD /api/users/
-│   │   │   └── export.py        ← GET /api/export/excel|pdf|nomina
+│   │   │   └── export.py        ← GET /api/export/excel|pdf|nomina|empleados-sin-salario
 │   │   ├── services/
 │   │   │   ├── excel_processor.py ← ETL principal
 │   │   │   ├── scheduler.py       ← APScheduler
+│   │   │   ├── trazalo_job.py     ← Sync de Trazalo fuera del request (candado + estado)
 │   │   │   ├── auth_service.py    ← JWT + bcrypt
 │   │   │   ├── dashboard_service.py ← Consultas para tableros
 │   │   │   ├── excel_report.py    ← Armado de los libros .xlsx
@@ -233,6 +234,8 @@ nomina-dashboard/
 | GET | `/api/execution/history` | Historial ETL | Cualquiera |
 | GET | `/api/execution/{id}` | Detalle ejecución | Cualquiera |
 | POST | `/api/execution/trigger` | Disparar ETL manual | Admin |
+| POST | `/api/execution/trigger-trazalo` | Sincronizar Trazalo. Responde **202** y corre en segundo plano | Admin |
+| GET | `/api/execution/trazalo-status` | Estado del sync de Trazalo: `idle`/`running`/`ok`/`skipped`/`error` | Admin |
 | GET | `/api/users/` | Listar usuarios | Admin |
 | POST | `/api/users/` | Crear usuario | Admin |
 | PUT | `/api/users/{id}` | Editar usuario | Admin |
@@ -240,6 +243,7 @@ nomina-dashboard/
 | GET | `/api/export/excel` | Exportar Excel | Admin/Analista |
 | GET | `/api/export/pdf` | Exportar PDF | Admin/Analista |
 | GET | `/api/export/nomina` | Prenómina por áreas con liquidación de incapacidades | Permiso `reporte_nomina` |
+| GET | `/api/export/empleados-sin-salario` | Activos en Trazalo sin salario cargado | Permiso `reporte_nomina` |
 
 Documentación interactiva completa: **http://localhost:8000/api/docs**
 
