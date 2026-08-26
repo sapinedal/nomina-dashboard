@@ -55,6 +55,10 @@ function initUserUI() {
   // export_excel: se puede quitar sin tocar las demas exportaciones.
   const btnNomina = document.getElementById('btn-export-nomina');
   if (btnNomina) btnNomina.style.display = hasPermission('reporte_nomina') ? 'flex' : 'none';
+  // Mismo permiso que la prenomina: la audiencia es la de nomina, aunque este
+  // listado no lleve ninguna cifra.
+  const btnSinSalario = document.getElementById('btn-export-sin-salario');
+  if (btnSinSalario) btnSinSalario.style.display = hasPermission('reporte_nomina') ? 'flex' : 'none';
 }
 
 // ── Dark mode ─────────────────────────────────────────────────
@@ -1216,6 +1220,20 @@ document.getElementById('btn-export-nomina')?.addEventListener('click', async ()
     });
   } catch (e) {
     showToast('No se pudo exportar el reporte de nómina: ' + e.message, 'danger');
+  }
+});
+
+document.getElementById('btn-export-sin-salario')?.addEventListener('click', async () => {
+  if (!hasPermission('reporte_nomina')) {
+    showToast('Su perfil no permite ver el listado de empleados sin salario', 'warning');
+    return;
+  }
+  try {
+    // Sin filtros: la lista es del roster ACTUAL de Trazalo, no de un periodo.
+    // El backend la acota a las areas del usuario.
+    await API.downloadEmpleadosSinSalario();
+  } catch (e) {
+    showToast('No se pudo exportar el listado de empleados sin salario: ' + e.message, 'danger');
   }
 });
 

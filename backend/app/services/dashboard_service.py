@@ -1171,6 +1171,24 @@ def roster_sincronizado(db: Session) -> bool:
     return bool(row and row.n)
 
 
+
+def filtrar_filas_por_areas(filas: list[dict], areas) -> list[dict]:
+    """Acota en memoria unas filas ya traidas a las areas autorizadas.
+
+    Mismo contrato que `_area_sql_clause` pero para datos que no salen de SQL
+    (p.ej. el roster que se consulta en vivo a Trazalo): `None` es admin, sin
+    restriccion; una lista VACIA es un usuario restringido sin areas asignadas,
+    que debe recibir CERO filas y no todas.
+
+    Ese ultimo caso es el que importa: abrirlo "por comodidad" es una fuga de
+    datos entre areas de nomina, y ya se corrigio una vez con ese mismo error.
+    """
+    if areas is None:
+        return filas
+    permitidas = set(areas)
+    return [f for f in filas if f.get("area") in permitidas]
+
+
 def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
     """Una fila por empleado ACTIVO, tenga o no novedades en el periodo.
 
