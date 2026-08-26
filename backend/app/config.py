@@ -40,11 +40,23 @@ class Settings(BaseSettings):
     # Sesión en cookies HttpOnly (DEF-0003). Secure=true requiere HTTPS (DEF-0001).
     COOKIE_SECURE: bool = True
     COOKIE_SAMESITE: str = "lax"
-    # Liquidación de incapacidades (reporte de nómina). SMLMV_MENSUAL es el
-    # salario mínimo legal vigente: sirve de PISO, una incapacidad no puede
-    # liquidarse por debajo. Sin él, el endpoint falla con mensaje explícito en
-    # vez de calcular con una cifra inventada. Hay que actualizarlo cada año.
+    # Liquidación de incapacidades (reporte de nómina). El SMLMV es el PISO:
+    # una incapacidad no puede liquidarse por debajo de SMLMV/30 por día.
+    # El valor NO se toma de aquí en el caso normal, sino de la tabla por año de
+    # services/smlmv.py, para que cada período se liquide con el mínimo que
+    # regía ese año. Estas dos variables son las válvulas para operar sin
+    # desplegar código:
+    #   SMLMV_POR_ANIO  "2027:1900000,2028:2050000" — cubre un año que la tabla
+    #                   todavía no trae; es lo que hay que usar cada enero si el
+    #                   código va con retraso.
+    #   SMLMV_MENSUAL   respaldo global, solo se consulta para años que no están
+    #                   ni en la tabla ni en SMLMV_POR_ANIO. No pisa un valor por
+    #                   año: si lo hiciera, los períodos viejos volverían a
+    #                   liquidarse con el mínimo de hoy.
+    # Si el año pedido no aparece en ninguna parte, el export responde 400 en vez
+    # de calcular con una cifra inventada.
     SMLMV_MENSUAL: Optional[float] = None
+    SMLMV_POR_ANIO: Optional[str] = None
     INCAP_PCT_DIAS_1_90: float = 0.6667
     INCAP_PCT_DIAS_91_180: float = 0.50
 

@@ -179,12 +179,15 @@ nomina-dashboard/
 │   │   │   ├── dashboard.py     ← GET  /api/dashboard/*
 │   │   │   ├── execution.py     ← GET/POST /api/execution/*
 │   │   │   ├── users.py         ← CRUD /api/users/
-│   │   │   └── export.py        ← GET /api/export/excel|pdf
+│   │   │   └── export.py        ← GET /api/export/excel|pdf|nomina
 │   │   ├── services/
 │   │   │   ├── excel_processor.py ← ETL principal
 │   │   │   ├── scheduler.py       ← APScheduler
 │   │   │   ├── auth_service.py    ← JWT + bcrypt
-│   │   │   └── dashboard_service.py ← Consultas para tableros
+│   │   │   ├── dashboard_service.py ← Consultas para tableros
+│   │   │   ├── excel_report.py    ← Armado de los libros .xlsx
+│   │   │   ├── nomina_report.py   ← Liquidación de incapacidades (puro)
+│   │   │   └── smlmv.py           ← Piso legal por año (ver §9)
 │   │   └── utils/
 │   │       ├── logger.py          ← structlog
 │   │       └── validators.py      ← Normalización + validación
@@ -236,6 +239,7 @@ nomina-dashboard/
 | DELETE | `/api/users/{id}` | Eliminar usuario | Admin |
 | GET | `/api/export/excel` | Exportar Excel | Admin/Analista |
 | GET | `/api/export/pdf` | Exportar PDF | Admin/Analista |
+| GET | `/api/export/nomina` | Prenómina por áreas con liquidación de incapacidades | Permiso `reporte_nomina` |
 
 Documentación interactiva completa: **http://localhost:8000/api/docs**
 
@@ -254,10 +258,54 @@ Documentación interactiva completa: **http://localhost:8000/api/docs**
 | `SCHEDULER_HOUR` | Hora para ETL | `23` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Duración del token | `480` |
 | `LOG_LEVEL` | Nivel de log: DEBUG/INFO/WARNING | `INFO` |
+| `SMLMV_POR_ANIO` | Piso legal por año, para años que la tabla del código no trae (ver §10) | `2027:1900000` |
+| `SMLMV_MENSUAL` | Respaldo global del piso legal. Normalmente vacío | *(vacío)* |
 
 ---
 
-## 9. Escalabilidad
+## 9. Salario mínimo (SMLMV) — mantenimiento anual
+
+Una incapacidad se liquida **sobre el salario de cada empleado** (el de
+`salarios_empleados`): su salario / 30, al 66,67% los días 1–90 y al 50% los días
+91–180. Sobre ese resultado se aplica el **piso legal**: ningún día puede pagarse
+por debajo de `1 SMLMV / 30`, sin importar cuánto gane el empleado (Decreto 780
+de 2016 art. 3.2.1.10; Sentencia C-543/2007).
+
+El piso muerde por debajo de `SMLMV / 0,6667`. Con el mínimo de 2026
+($1.750.905, piso diario $58.363,50) ese umbral es **$2.626.357**:
+
+| Salario | 66,67% de su día | Se paga | |
+|---|---|---|---|
+| 1.750.905 | 38.911 | **58.364** | piso |
+| 2.000.000 | 44.447 | **58.364** | piso |
+| 3.000.000 | 66.670 | 66.670 | porcentaje |
+
+El umbral **cambia cada enero**, así que el valor de cada año vive en la tabla
+`SMLMV_POR_ANIO` de `backend/app/services/smlmv.py` (2020–2026 cargados, con su
+decreto anotado), y se elige por el **año del período que se exporta**, no por el
+año en curso. No es un detalle menor: el salto del 23% del mínimo de 2026 metió
+bajo el piso a salarios que en 2025 se liquidaban al porcentaje (el umbral de
+2025 era $2.135.000). Precedencia:
+
+1. Variable de entorno `SMLMV_POR_ANIO` (formato `anio:valor`, separado por comas).
+2. Tabla del código.
+3. Variable `SMLMV_MENSUAL` — solo para años que no estén en 1 ni en 2.
+4. Si no hay nada, `/api/export/nomina` responde **400** diciendo qué configurar.
+   Nunca liquida con una cifra asumida.
+
+**Cada enero**, una de dos:
+
+- Actualizar la tabla de `smlmv.py` con el decreto nuevo y desplegar (preferido:
+  queda versionado y con test), o
+- si no hay despliegue a mano, definir `SMLMV_POR_ANIO=2027:<valor>` en el
+  entorno de Dokploy y reiniciar el contenedor.
+
+El libro Excel imprime el piso aplicado bajo el período, para poder auditar la
+cifra meses después.
+
+---
+
+## 10. Escalabilidad
 
 - **Múltiples workers**: cambiar en `Dockerfile` el comando a `uvicorn ... --workers 4`
 - **Base de datos**: pool configurado con `pool_size=10, max_overflow=20`

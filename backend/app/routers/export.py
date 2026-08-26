@@ -16,6 +16,7 @@ from app.services.permissions import PERM_EXPORT_EXCEL, PERM_EXPORT_PDF, PERM_RE
 from app.services import dashboard_service as svc
 from app.services.excel_report import construir_libro_excel, construir_libro_nomina
 from app.services.nomina_report import armar_reporte
+from app.services.smlmv import SMLMVNoConfigurado, resolver_smlmv
 from app.config import settings
 from fastapi import HTTPException, status
 
@@ -84,14 +85,20 @@ async def export_reporte_nomina(
     sin seleccion las obtiene todas; y un usuario restringido sin areas
     asignadas obtiene cero filas (fail-closed).
     """
-    if not settings.SMLMV_MENSUAL:
-        # Preferible fallar visible que liquidar con una cifra inventada.
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Falta configurar SMLMV_MENSUAL en el servidor: es el piso legal "
-                   "para liquidar incapacidades y sin él el reporte daría cifras "
-                   "por debajo de la norma.",
+    # El piso legal se resuelve por el AÑO del periodo, no con un valor global:
+    # un reporte de 2025 debe usar el minimo de 2025. Si ese año no esta ni en la
+    # tabla ni en la configuracion, se falla visible en vez de liquidar con una
+    # cifra inventada.
+    try:
+        smlmv, anio_smlmv = resolver_smlmv(
+            periodo,
+            tabla_env=settings.SMLMV_POR_ANIO,
+            override=settings.SMLMV_MENSUAL,
         )
+    except (SMLMVNoConfigurado, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     if not svc.roster_sincronizado(db):
         # Tras desplegar, las columnas del roster estan vacias hasta la primera
@@ -116,12 +123,14 @@ async def export_reporte_nomina(
 
     filas = armar_reporte(
         filas, incapacidades,
-        smlmv=float(settings.SMLMV_MENSUAL),
+        smlmv=smlmv,
         pct_66=settings.INCAP_PCT_DIAS_1_90,
         pct_50=settings.INCAP_PCT_DIAS_91_180,
     )
 
-    output = construir_libro_nomina(filas, periodo)
+    # El SMLMV usado viaja al libro: quien revise la prenomina tiene que poder
+    # ver con que piso se liquido sin abrir la configuracion del servidor.
+    output = construir_libro_nomina(filas, periodo, smlmv=smlmv, anio_smlmv=anio_smlmv)
     filename = f"reporte_nomina_{periodo or 'todos'}.xlsx"
     return StreamingResponse(
         output,

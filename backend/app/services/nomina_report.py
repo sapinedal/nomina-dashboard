@@ -15,9 +15,19 @@ Alcance y límites, deliberados y acordados con el área de nómina:
   los días 3-90. Cambia quién paga, no cuánto.
 - Más allá del día 180 la prestación corresponde a la AFP. Se liquida en 0 y se
   deja constancia, en vez de afirmar una cifra que la empresa no desembolsa.
-- El piso legal de 1 SMLMV se aplica por día (SMLMV/30). Sin ese piso, un
-  salario mínimo liquidado al 66,67% quedaría por debajo de lo que exige la
-  norma.
+- La liquidación va SIEMPRE sobre lo que gana cada empleado: su salario del
+  roster / 30, por el porcentaje del tramo. El SMLMV no reemplaza ese salario.
+- Sobre ese cálculo se aplica el piso legal de 1 SMLMV por día (SMLMV/30), y se
+  aplica a TODOS, no solo a quien devenga el mínimo: la norma dice que ninguna
+  incapacidad puede pagarse por debajo del salario mínimo diario vigente
+  (Decreto 780 de 2016 art. 3.2.1.10; Sentencia C-543/2007). En la práctica el
+  piso muerde por debajo de `SMLMV / 0,6667`: con el mínimo de 2026 eso son
+  2.626.357, así que un salario de 2.000.000 cobra el piso (58.363,50/día) y no
+  el 66,67% de su día (44.446,67). Confirmado con el área de nómina el
+  2026-08-26.
+- Ese umbral se mueve cada enero y NO es menor: el salto del 23% del mínimo de
+  2026 metió bajo el piso a salarios que en 2025 se liquidaban al porcentaje.
+  Por eso el SMLMV se toma del año del periodo (ver services/smlmv.py).
 - Los días **solo se acumulan dentro de un mismo episodio continuo** (prórroga).
   Dos incapacidades separadas por un día o más se liquidan de forma
   independiente, cada una arrancando en el día 1. Sin diagnóstico en el dato,
