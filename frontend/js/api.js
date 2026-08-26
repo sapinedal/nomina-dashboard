@@ -262,10 +262,25 @@ async function downloadFile(endpoint) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** Descarta filtros vacios y serializa los que son lista como parametros
+ *  repetidos (?area=NOMINA&area=SST), que es lo que espera FastAPI para un
+ *  Query(List[str]).
+ *
+ *  Devuelve URLSearchParams a proposito: `new URLSearchParams(clean(p))` usa
+ *  el constructor de copia, asi que todas las llamadas existentes siguen
+ *  funcionando sin tocarlas. Pasar un objeto plano con un array habria
+ *  producido "area=NOMINA,SST", una sola area con una coma dentro. */
 function clean(obj) {
-  return Object.fromEntries(
-    Object.entries(obj).filter(([, v]) => v !== null && v !== undefined && v !== '')
-  );
+  const vacio = (v) => v === null || v === undefined || v === '';
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(obj)) {
+    if (Array.isArray(v)) {
+      v.filter((item) => !vacio(item)).forEach((item) => params.append(k, item));
+    } else if (!vacio(v)) {
+      params.append(k, v);
+    }
+  }
+  return params;
 }
 
 function showToast(message, type = 'success') {

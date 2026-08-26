@@ -3,7 +3,7 @@ Exportación de datos a Excel y PDF.
 """
 import io
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/export", tags=["Exportación"])
 async def export_excel(
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin: Optional[date] = Query(None),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     tipo_novedad: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -97,7 +97,7 @@ async def export_excel(
 async def export_pdf(
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin: Optional[date] = Query(None),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     tipo_novedad: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),

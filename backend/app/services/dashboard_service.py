@@ -243,25 +243,52 @@ PALETTE = [
 ]
 
 
+def _normalize_areas(chosen) -> list[str]:
+    """Normaliza el filtro de área de la UI, que ahora puede venir como una
+    sola (`?area=A`, compatibilidad) o como varias (`?area=A&area=B`).
+
+    Devuelve una lista sin vacíos ni duplicados, conservando el orden en que
+    el usuario las marcó."""
+    if chosen is None:
+        return []
+    if isinstance(chosen, str):
+        chosen = [chosen]
+    vistas, salida = set(), []
+    for area in chosen:
+        area = (area or "").strip()
+        if area and area not in vistas:
+            vistas.add(area)
+            salida.append(area)
+    return salida
+
+
 def _effective_areas(filters: dict) -> Optional[list[str]]:
     """Resuelve qué áreas debe ver esta consulta, cruzando la restricción del
     usuario autenticado (filters['_allowed_areas'] -- ver dashboard.py, se
     calcula SIEMPRE server-side, el frontend no puede escribir esta clave)
-    con el área que el usuario haya elegido en el filtro de UI (filters['area']).
+    con las áreas que el usuario haya marcado en el filtro de UI
+    (filters['area'], una o varias).
 
     Devuelve:
-      - None                si no hay restricción (admin) y no hay filtro de área -> sin filtrar
-      - [un_area]            si no hay restricción y el usuario eligió un área -> comportamiento actual sin cambios
-      - lista de N áreas     si hay restricción: la elegida (si es una de las suyas) o TODAS las suyas
-      - []                   restringido sin áreas asignadas -> debe devolver cero filas (fail-closed)
+      - None                 sin restricción (admin) y sin filtro -> no filtra
+      - lista de las marcadas si no hay restricción y marcó áreas
+      - intersección          si hay restricción y marcó áreas suyas
+      - todas las suyas       si hay restricción y no marcó, o marcó solo ajenas
+      - []                    restringido sin áreas asignadas -> cero filas (fail-closed)
+
+    Generalización estricta del comportamiento anterior: con una sola área
+    marcada devuelve exactamente lo mismo que la versión de un único valor.
     """
     allowed = filters.get("_allowed_areas")
-    chosen = filters.get("area")
+    chosen = _normalize_areas(filters.get("area"))
     if allowed is None:
-        return [chosen] if chosen else None
-    if chosen and chosen in allowed:
-        return [chosen]
-    return list(allowed)
+        return chosen or None
+    if not allowed:
+        # Restringido sin áreas asignadas: nunca ampliar. Fail-closed.
+        return []
+    propias = [area for area in chosen if area in allowed]
+    # Marcar solo áreas ajenas se ignora y se cae a las suyas, igual que antes.
+    return propias or list(allowed)
 
 
 def _apply_area_filter(query, filters: dict):

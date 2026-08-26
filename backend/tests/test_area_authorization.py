@@ -102,6 +102,57 @@ class TestAreaAuthorization(unittest.TestCase):
     def test_restringido_sin_areas_asignadas_falla_cerrado(self):
         self.assertEqual(svc._effective_areas({"_allowed_areas": []}), [])
 
+    # ── Selección múltiple de áreas (checklist del frontend) ──────────────
+
+    def test_admin_marca_varias_areas(self):
+        self.assertEqual(
+            sorted(svc._effective_areas({"_allowed_areas": None, "area": ["NOMINA", "SST"]})),
+            ["NOMINA", "SST"],
+        )
+
+    def test_restringido_marca_dos_suyas(self):
+        allowed = ["NOMINA", "SST", "SELECCION"]
+        result = svc._effective_areas({"_allowed_areas": allowed, "area": ["SST", "NOMINA"]})
+        self.assertEqual(sorted(result), ["NOMINA", "SST"])
+
+    def test_interseccion_descarta_las_ajenas(self):
+        """Marcar una suya y una ajena devuelve solo la suya: la selección se
+        cruza con lo permitido, no lo amplía."""
+        allowed = ["NOMINA", "SST"]
+        result = svc._effective_areas({"_allowed_areas": allowed, "area": ["SST", "CONTABILIDAD"]})
+        self.assertEqual(result, ["SST"])
+        self.assertNotIn("CONTABILIDAD", result)
+
+    def test_marcar_solo_ajenas_cae_a_las_suyas(self):
+        """Mismo criterio que con un único valor: se ignora y se devuelven las
+        propias, nunca las pedidas."""
+        allowed = ["NOMINA", "SST"]
+        result = svc._effective_areas(
+            {"_allowed_areas": allowed, "area": ["CONTABILIDAD", "TESORERIA"]}
+        )
+        self.assertEqual(sorted(result), sorted(allowed))
+
+    def test_sin_areas_asignadas_marcando_varias_sigue_fallando_cerrado(self):
+        """El caso que nunca debe romperse: sin áreas asignadas, ninguna
+        selección del cliente puede abrir datos."""
+        self.assertEqual(
+            svc._effective_areas({"_allowed_areas": [], "area": ["NOMINA", "SST"]}), []
+        )
+
+    def test_duplicados_y_vacios_se_normalizan(self):
+        result = svc._effective_areas(
+            {"_allowed_areas": None, "area": ["SST", "SST", "  ", "", "NOMINA"]}
+        )
+        self.assertEqual(result, ["SST", "NOMINA"])
+
+    def test_lista_vacia_equivale_a_sin_filtro(self):
+        self.assertIsNone(svc._effective_areas({"_allowed_areas": None, "area": []}))
+        allowed = ["NOMINA", "SST"]
+        self.assertEqual(
+            sorted(svc._effective_areas({"_allowed_areas": allowed, "area": []})),
+            sorted(allowed),
+        )
+
     # ── Verificación end-to-end contra consultas reales del servicio ──
 
     def test_kpis_admin_ve_todas_las_areas(self):
