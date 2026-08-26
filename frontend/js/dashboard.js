@@ -112,18 +112,11 @@ async function refreshAreaSedeOptions(panelName) {
     const areas = opts.areas || [];
     const sedes = opts.sedes || [];
 
-    populateSelect('filter-area', areas);
+    populateAreaChecklist(areas);
     populateSelect('filter-sede', sedes);
 
-    const areaSel = document.getElementById('filter-area');
-    if (areaSel) {
-      if (currentFilters.area && !areas.includes(currentFilters.area)) {
-        areaSel.value = '';
-        currentFilters.area = null;
-      } else {
-        areaSel.value = currentFilters.area || '';
-      }
-    }
+    // La sincronía la resuelve populateAreaChecklist: descarta lo marcado
+    // que ya no exista en el período y conserva el resto.
 
     const sedeSel = document.getElementById('filter-sede');
     if (sedeSel) {
@@ -193,12 +186,97 @@ async function loadPanel(panelName) {
 async function loadFilterOptions() {
   try {
     const opts = await API.getFilterOpts('ejecutivo');
-    populateSelect('filter-area',    opts.areas         || []);
+    populateAreaChecklist(opts.areas || []);
     populateSelect('filter-sede',    opts.sedes         || []);
     populateSelect('filter-tipo',    opts.tipos_novedad || []);
     populateSelect('filter-periodo', opts.periodos      || []);
   } catch (e) {
     console.warn('No se pudieron cargar opciones de filtro:', e.message);
+  }
+}
+
+// ── Checklist de áreas (selección múltiple) ───────────────────
+// El filtro de área pasó de <select> simple a checklist. El estado vive aquí
+// y no en el DOM: al cambiar el período se repueblan las opciones y se
+// perdería la selección (ver refreshAreaSedeOptions).
+let _areasDisponibles  = [];
+let _areasElegidas     = [];
+let _areaFirmaAlAbrir  = '';
+
+/** Ninguna marcada, o todas marcadas, equivalen a "sin filtro de área".
+ *  Evita mandar decenas de parámetros repetidos en la URL. */
+function _areasParaFiltro() {
+  if (!_areasElegidas.length) return null;
+  if (_areasElegidas.length === _areasDisponibles.length) return null;
+  return [..._areasElegidas];
+}
+
+/** El sub-filtro de la tabla de empleados es de selección única: solo puede
+ *  reflejar el filtro superior si hay exactamente un área marcada. */
+function _unicaAreaElegida() {
+  return _areasElegidas.length === 1 ? _areasElegidas[0] : '';
+}
+
+function _pintarEtiquetaArea() {
+  const el = document.getElementById('filter-area-label');
+  if (!el) return;
+  const n = _areasElegidas.length;
+  el.textContent = n === 0 ? 'Todas las áreas'
+                 : n === 1 ? _areasElegidas[0]
+                 : `${n} áreas`;
+}
+
+function populateAreaChecklist(areas) {
+  _areasDisponibles = areas || [];
+  // Conservar solo lo marcado que siga existiendo en el período actual.
+  _areasElegidas = _areasElegidas.filter(a => _areasDisponibles.includes(a));
+  const cont = document.getElementById('filter-area-options');
+  if (!cont) return;
+  if (!_areasDisponibles.length) {
+    cont.innerHTML = '<div class="multiselect-empty">Sin áreas disponibles</div>';
+    _pintarEtiquetaArea();
+    return;
+  }
+  cont.innerHTML = _areasDisponibles.map(a => `
+    <label class="multiselect-option">
+      <input type="checkbox" value="${escapeHtml(a)}"${_areasElegidas.includes(a) ? ' checked' : ''}>
+      <span title="${escapeHtml(a)}">${escapeHtml(a)}</span>
+    </label>`).join('');
+  cont.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      _areasElegidas = [...cont.querySelectorAll('input[type=checkbox]:checked')].map(i => i.value);
+      _pintarEtiquetaArea();
+    });
+  });
+  _pintarEtiquetaArea();
+}
+
+function _marcarTodasLasAreas(marcar) {
+  _areasElegidas = marcar ? [..._areasDisponibles] : [];
+  document.querySelectorAll('#filter-area-options input[type=checkbox]')
+    .forEach(i => { i.checked = marcar; });
+  _pintarEtiquetaArea();
+}
+
+function areaPanelAbierto() {
+  const panel = document.getElementById('filter-area-panel');
+  return !!panel && !panel.hidden;
+}
+
+/** Los filtros se aplican al CERRAR el panel, no en cada tic: marcar cinco
+ *  áreas recargaría el panel cinco veces. */
+function toggleAreaPanel(abrir) {
+  const panel  = document.getElementById('filter-area-panel');
+  const toggle = document.getElementById('filter-area-toggle');
+  if (!panel || !toggle) return;
+  const estaba = !panel.hidden;
+  const nuevo  = abrir === undefined ? !estaba : abrir;
+  panel.hidden = !nuevo;
+  toggle.setAttribute('aria-expanded', String(nuevo));
+  if (!estaba && nuevo) {
+    _areaFirmaAlAbrir = _areasElegidas.join('|');
+  } else if (estaba && !nuevo && _areasElegidas.join('|') !== _areaFirmaAlAbrir) {
+    applyFilters();
   }
 }
 
@@ -221,10 +299,24 @@ function initFilterListeners() {
   document.getElementById('btn-apply-filters')?.addEventListener('click', applyFilters);
   document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
   document.getElementById('btn-refresh')?.addEventListener('click', () => loadPanel(activePanel));
-  // Auto-aplicar al cambiar dropdowns de selección única (área, sede, tipo)
-  ['filter-area', 'filter-sede', 'filter-tipo'].forEach(id => {
+  // Auto-aplicar al cambiar dropdowns de selección única (sede, tipo).
+  // El área es checklist y se aplica al cerrar su panel (ver toggleAreaPanel).
+  ['filter-sede', 'filter-tipo'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', applyFilters);
   });
+  // Checklist de áreas
+  document.getElementById('filter-area-toggle')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleAreaPanel();
+  });
+  document.getElementById('filter-area-panel')?.addEventListener('click', (e) => e.stopPropagation());
+  document.getElementById('filter-area-all')?.addEventListener('click', () => _marcarTodasLasAreas(true));
+  document.getElementById('filter-area-none')?.addEventListener('click', () => _marcarTodasLasAreas(false));
+  document.addEventListener('click', () => { if (areaPanelAbierto()) toggleAreaPanel(false); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && areaPanelAbierto()) toggleAreaPanel(false);
+  });
+
   // Al cambiar el período, en ausentismo/horas-extras se debe reacotar
   // Área/Sede a ese mes antes de recargar el panel.
   document.getElementById('filter-periodo')?.addEventListener('change', async () => {
@@ -242,7 +334,7 @@ function getFiltersFromForm() {
   return {
     fecha_inicio: document.getElementById('filter-fecha-inicio')?.value || null,
     fecha_fin:    document.getElementById('filter-fecha-fin')?.value    || null,
-    area:         document.getElementById('filter-area')?.value         || null,
+    area:         _areasParaFiltro(),
     sede:         document.getElementById('filter-sede')?.value         || null,
     tipo_novedad: document.getElementById('filter-tipo')?.value         || null,
     periodo:      document.getElementById('filter-periodo')?.value      || null,
@@ -258,9 +350,10 @@ async function applyFilters() {
 }
 
 async function clearFilters() {
-  ['filter-fecha-inicio','filter-fecha-fin','filter-area','filter-sede',
+  ['filter-fecha-inicio','filter-fecha-fin','filter-sede',
    'filter-tipo','filter-periodo','filter-cedula']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  _marcarTodasLasAreas(false);
   const toggleActivos = document.getElementById('filter-solo-activos');
   if (toggleActivos) toggleActivos.checked = false;
   currentFilters = {};
@@ -412,8 +505,8 @@ async function loadEmpleadosLista() {
       areaSelect.innerHTML = '<option value="">Todas las áreas</option>' +
         areas.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
       // Sincronizar con el filtro del panel superior si hay área activa
-      areaSelect.value = currentFilters.area || '';
-      _empFiltroArea   = currentFilters.area || '';
+      areaSelect.value = _unicaAreaElegida();
+      _empFiltroArea   = _unicaAreaElegida();
     }
 
     // Contadores en badges

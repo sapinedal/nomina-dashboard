@@ -6,7 +6,7 @@
   <title>NóminaBoard — Tablero</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
-  <link rel="stylesheet" href="css/main.css?v=20260623c" />
+  <link rel="stylesheet" href="css/main.css?v=20260826a" />
 </head>
 <body>
 
@@ -84,9 +84,21 @@
 
   <div class="filter-group">
     <i class="bi bi-diagram-3" style="color:var(--muted);font-size:.8rem"></i>
-    <select id="filter-area" title="Área / Departamento">
-      <option value="">Todas las áreas</option>
-    </select>
+    <div class="multiselect" id="filter-area-multi">
+      <button type="button" class="multiselect-toggle" id="filter-area-toggle"
+              title="Área / Departamento" aria-haspopup="true" aria-expanded="false">
+        <span id="filter-area-label">Todas las áreas</span>
+        <i class="bi bi-chevron-down" style="font-size:.7rem"></i>
+      </button>
+      <div class="multiselect-panel" id="filter-area-panel" hidden
+           role="group" aria-label="Áreas">
+        <div class="multiselect-actions">
+          <button type="button" id="filter-area-all">Todas</button>
+          <button type="button" id="filter-area-none">Ninguna</button>
+        </div>
+        <div class="multiselect-options" id="filter-area-options"></div>
+      </div>
+    </div>
   </div>
 
   <div class="filter-group">
@@ -827,8 +839,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="js/escape-html.js?v=20260720a"></script>
-<script src="js/api.js?v=20260825a"></script>
+<script src="js/api.js?v=20260826a"></script>
 <script src="js/charts.js?v=20260727a"></script>
-<script src="js/dashboard.js?v=20260825a"></script>
+<script src="js/dashboard.js?v=20260826a"></script>
 </body>
 </html>

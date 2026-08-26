@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import List, Optional
 from datetime import date
 
 from app.database import get_db
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["Tablero"])
 def _build_filters(
     fecha_inicio: Optional[date],
     fecha_fin: Optional[date],
-    area: Optional[str],
+    area: Optional[List[str]],
     sede: Optional[str],
     tipo_novedad: Optional[str],
     periodo: Optional[str],
@@ -43,7 +43,7 @@ def _build_filters(
 async def get_kpis(
     fecha_inicio: Optional[date] = Query(None, description="Filtro desde fecha"),
     fecha_fin: Optional[date] = Query(None, description="Filtro hasta fecha"),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     tipo_novedad: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None, example="2025-01"),
@@ -59,7 +59,7 @@ async def get_kpis(
 async def chart_por_tipo(
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin: Optional[date] = Query(None),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     top_n: int = Query(10, ge=3, le=30),
@@ -89,7 +89,7 @@ async def chart_por_area(
 async def chart_tendencia(
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin: Optional[date] = Query(None),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     tipo_novedad: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -118,7 +118,7 @@ async def chart_valor_area(
 async def get_table(
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin: Optional[date] = Query(None),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     tipo_novedad: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
@@ -140,7 +140,7 @@ async def get_table(
 async def chart_valor_categoria(
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin: Optional[date] = Query(None),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -162,7 +162,7 @@ async def filter_options(
 
 @router.get("/alerts", response_model=AlertsResponse, summary="Motor de alertas y validación")
 async def get_alerts(
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -174,7 +174,7 @@ async def get_alerts(
 
 @router.get("/alerts/detalle", summary="Listado detallado de registros con alertas")
 async def get_alerts_detalle(
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -186,7 +186,7 @@ async def get_alerts_detalle(
 
 @router.get("/panel/ausentismo", summary="Datos del panel de ausentismo")
 async def panel_ausentismo(
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -200,7 +200,7 @@ async def panel_ausentismo(
 async def resumen_por_area(
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin:    Optional[date] = Query(None),
-    area:         Optional[str]  = Query(None),
+    area:         Optional[List[str]]  = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede:         Optional[str]  = Query(None),
     periodo:      Optional[str]  = Query(None),
     db: Session = Depends(get_db),
@@ -214,7 +214,7 @@ async def resumen_por_area(
 async def get_empleados(
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin: Optional[date] = Query(None),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     tipo_novedad: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
@@ -237,7 +237,7 @@ async def detectar_retiros(
 
 @router.get("/panel/horas-extras", summary="Datos del panel de horas extras y recargos")
 async def panel_horas_extras(
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -250,7 +250,7 @@ async def panel_horas_extras(
 @router.get("/panel/horas-extras/detalle", summary="Detalle por empleado de un tipo de HE/recargo")
 async def panel_horas_extras_detalle(
     tipo: str = Query(..., description="Tipo de HE/recargo a desglosar (ej. 'RECARGO NOCTURNO')"),
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -262,7 +262,7 @@ async def panel_horas_extras_detalle(
 
 @router.get("/ausentismo/empleados", summary="Lista detallada de empleados con novedades de ausentismo")
 async def empleados_ausentismo(
-    area: Optional[str] = Query(None),
+    area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     sede: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
     db: Session = Depends(get_db),
