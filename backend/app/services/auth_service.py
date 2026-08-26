@@ -4,19 +4,24 @@ import redis
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 
 from app.config import settings
 from app.models.user import User
 from app.database import get_db
 from app.schemas.user import TokenData
+from app.services.permissions import role_has_permission
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+# auto_error=False: permite autenticar también vía cookie HttpOnly (DEF-0003).
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
+
+ACCESS_COOKIE_NAME = "nb_access_token"
+REFRESH_COOKIE_NAME = "nb_refresh_token"
 
 # from_url() no conecta de inmediato (lazy): si Redis no esta disponible al
 # arrancar la app, esto NO falla el startup -- el primer error real ocurre
@@ -132,8 +137,16 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
     return user
 
 
+def extract_access_token(request: Request, bearer: Optional[str] = None) -> Optional[str]:
+    """Prioridad: Authorization Bearer → cookie HttpOnly."""
+    if bearer:
+        return bearer
+    return request.cookies.get(ACCESS_COOKIE_NAME)
+
+
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    bearer: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
     credentials_exception = HTTPException(
@@ -141,6 +154,9 @@ async def get_current_user(
         detail="No se pudo validar las credenciales",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = extract_access_token(request, bearer)
+    if not token:
+        raise credentials_exception
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         # Un refresh token no debe poder autenticar requests directamente
@@ -207,3 +223,20 @@ def require_role(*roles: str):
 
 require_admin = require_role("admin")
 require_admin_or_analyst = require_role("admin", "analyst")
+
+
+def require_permission(permission: str):
+    """Dependencia FastAPI: el rol del usuario debe incluir el permiso.
+
+    Se prefiere sobre require_role en los endpoints donde el criterio real es
+    la acción (exportar, ver empleados) y no el cargo: así agregar el permiso
+    a otro perfil es un cambio en permissions.py, no en cada router.
+    """
+    async def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not role_has_permission(current_user.role, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"No tiene permiso: {permission}",
+            )
+        return current_user
+    return dependency
