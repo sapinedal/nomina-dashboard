@@ -163,6 +163,7 @@ def construir_libro_nomina(filas: List[dict], periodo: Optional[str] = None) -> 
         ("Cédula", "cedula", "txt"), ("Nombre Empleado", "nombre_empleado", "txt"),
         ("Área", "area", "txt"), ("Cargo", "cargo", "txt"),
         ("Salario base", "salario", "money"),
+        ("Novedades", "num_novedades", "qty"),
         ("Días incapacidad", "dias_incapacidad", "qty"),
         ("Días no remunerados", "dias_no_remunerados", "qty"),
         ("Días efectivos", "dias_efectivos", "qty"),

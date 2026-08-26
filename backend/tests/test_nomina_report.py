@@ -95,11 +95,28 @@ class TestArmarReporte(unittest.TestCase):
         return dict(fecha_inicio=ini, fecha_fin=fin, dias=dias, en_periodo=en_periodo)
 
     def test_sin_novedades_cobra_su_salario_completo(self):
+        """Un empleado que no tuvo ninguna novedad en el mes debe aparecer en el
+        reporte con su salario integro y diferencia cero. Antes ni siquiera
+        salia: la consulta arrancaba desde novedades_nomina."""
         from app.services.nomina_report import armar_reporte
-        r = armar_reporte([self._fila()], {}, SMLMV)[0]
+        r = armar_reporte([self._fila(num_novedades=0)], {}, SMLMV)[0]
         self.assertEqual(r["dias_efectivos"], 30)
+        self.assertAlmostEqual(r["salario_devengado"], SALARIO, places=2)
         self.assertAlmostEqual(r["total_a_pagar"], SALARIO, places=2)
         self.assertAlmostEqual(r["diferencia_vs_salario"], 0.0, places=2)
+
+    def test_javier_con_salario_minimo_no_pierde_nada(self):
+        """Caso real: salario = SMLMV, 3 dias de incapacidad. El piso legal
+        equivale a su salario diario, asi que cobra el 100%."""
+        from app.services.nomina_report import armar_reporte
+        minimo = 1_790_000.0
+        r = armar_reporte(
+            [self._fila(salario=minimo, dias_incapacidad=3.0)],
+            {"1": [self._incap("2026-06-23", "2026-06-25", 3.0)]}, minimo)[0]
+        self.assertAlmostEqual(r["valor_incapacidad"], 3 * minimo / 30, places=2)
+        self.assertAlmostEqual(r["total_a_pagar"], minimo, places=2)
+        self.assertAlmostEqual(r["diferencia_vs_salario"], 0.0, places=2)
+        self.assertIn("piso de 1 SMLMV", r["observaciones"])
 
     def test_incapacidad_que_cruza_tramo_baja_el_neto(self):
         """ANA arrastra 88 días de un episodio CONTINUO: de los 3 nuevos,

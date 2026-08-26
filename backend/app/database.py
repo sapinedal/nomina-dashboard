@@ -47,6 +47,17 @@ def _create_salarios_table():
         cedula VARCHAR(30) PRIMARY KEY,
         salario NUMERIC(15, 2) NOT NULL
     );
+    -- El roster de Trazalo traia nombre, area, sede y cargo, pero solo se
+    -- guardaba el salario. Sin esos campos no se puede saber que empleados
+    -- existen en un area cuando NO tienen novedades, y el reporte de nomina
+    -- los omitia por completo. Se anaden aqui y no en una tabla nueva para no
+    -- tocar los 9 JOIN que ya apuntan a salarios_empleados.
+    ALTER TABLE salarios_empleados ADD COLUMN IF NOT EXISTS nombre VARCHAR(200);
+    ALTER TABLE salarios_empleados ADD COLUMN IF NOT EXISTS area   VARCHAR(200);
+    ALTER TABLE salarios_empleados ADD COLUMN IF NOT EXISTS sede   VARCHAR(200);
+    ALTER TABLE salarios_empleados ADD COLUMN IF NOT EXISTS cargo  VARCHAR(200);
+    ALTER TABLE salarios_empleados ADD COLUMN IF NOT EXISTS activo INTEGER DEFAULT 1;
+    CREATE INDEX IF NOT EXISTS ix_salarios_area ON salarios_empleados (area);
     """
     with engine.connect() as conn:
         try:

@@ -1132,11 +1132,15 @@ def get_incapacidades_por_cedula(db: Session, filters: dict,
     va marcado con `en_periodo`: los de fuera no se cobran, solo aportan dias
     acumulados dentro de su episodio.
 
-    El filtro de area se mantiene (misma autorizacion que el resto); el de
-    periodo se retira a proposito, que es justo lo que da el historial.
+    No se filtra por area ni por periodo a proposito. Por periodo, porque eso
+    es justo lo que da el historial. Por area, porque el area de una novedad
+    antigua puede no coincidir con la del roster, y perder esos registros
+    romperia la deteccion de prorrogas. No hay fuga: armar_reporte solo consulta
+    las cedulas que ya salieron de get_reporte_nomina_rows, donde SI se aplico
+    la autorizacion.
     """
-    filtros_hist = {k: v for k, v in filters.items() if k != "periodo"}
-    extra_where, params = _panel_filters_sql(filtros_hist, full=False)
+    params: dict = {}
+    extra_where = ""
     sql = text(f"""
         SELECT n.cedula, n.fecha_inicio, n.fecha_fin, n.dias, n.periodo
         FROM novedades_nomina n
@@ -1155,30 +1159,52 @@ def get_incapacidades_por_cedula(db: Session, filters: dict,
     return por_cedula
 
 
-def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
-    """Una fila por empleado con su salario y el agregado de sus novedades.
+def roster_sincronizado(db: Session) -> bool:
+    """Hay roster de Trazalo con areas cargado?
 
-    A diferencia de get_export_rows, que devuelve una fila por novedad, aqui se
-    agrupa por cedula porque el reporte es una prenomina: lo que interesa es el
-    neto de cada persona.
-
-    La autorizacion por area entra por _panel_filters_sql, que aplica
-    _area_sql_clause igual que el resto. Es critico no duplicarla aqui: este
-    reporte expone salarios individuales.
-
-    Los importes de horas extras usan _HE_VALOR_EXPR, la misma expresion que
-    los paneles. Las incapacidades NO se valoran aqui: su liquidacion depende
-    de dias acumulados y de tramos legales, y vive en nomina_report.
+    Tras desplegar las columnas nuevas quedan vacias hasta que corra una
+    sincronizacion. Sin esto el reporte saldria vacio sin explicar por que.
     """
-    extra_where, params = _panel_filters_sql(filters, full=True)
+    row = db.execute(text(
+        "SELECT COUNT(*) AS n FROM salarios_empleados WHERE area IS NOT NULL"
+    )).first()
+    return bool(row and row.n)
+
+
+def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
+    """Una fila por empleado ACTIVO, tenga o no novedades en el periodo.
+
+    Arranca desde el roster (salarios_empleados) y no desde novedades_nomina.
+    Al reves, quien no tuvo ninguna novedad en el mes simplemente no aparecia,
+    y una prenomina tiene que listar a todo el mundo: el que no tuvo novedades
+    cobra su salario integro.
+
+    El periodo va en la condicion del LEFT JOIN, no en el WHERE. Ponerlo en el
+    WHERE volveria a descartar a los empleados sin novedades, que es justo el
+    defecto que se corrige.
+
+    El area se toma del roster, que es la fuente autorizada de RRHH; se recurre
+    al area de la novedad solo si el roster no la trae. La autorizacion sigue
+    en _area_sql_clause, ahora sobre el alias del roster.
+    """
+    area_where, params = _area_sql_clause(filters, alias="e", param_prefix="area_rep")
+    cond_join = ""
+    if filters.get("periodo"):
+        cond_join = " AND n.periodo = :periodo_rep"
+        params["periodo_rep"] = filters["periodo"]
+    sede_where = ""
+    if filters.get("sede"):
+        sede_where = " AND e.sede = :sede_rep"
+        params["sede_rep"] = filters["sede"]
+
     incap = _sql_incap_predicate("n")
     sql = text(f"""
         SELECT
-            n.cedula,
-            MAX(n.nombre_empleado) AS nombre_empleado,
-            MAX(n.area)  AS area,
-            MAX(n.cargo) AS cargo,
-            MAX(s.salario) AS salario,
+            e.cedula,
+            COALESCE(e.nombre, MAX(n.nombre_empleado)) AS nombre_empleado,
+            COALESCE(e.area,   MAX(n.area))            AS area,
+            COALESCE(e.cargo,  MAX(n.cargo))           AS cargo,
+            e.salario,
             COALESCE(SUM(CASE WHEN n.unidad = 'horas' AND n.tipo_novedad IN {_HE_TIPOS_SQL}
                               THEN {_HE_VALOR_EXPR} ELSE 0 END), 0) AS valor_extras,
             COALESCE(SUM(CASE WHEN n.unidad = 'dias' AND {incap}
@@ -1187,12 +1213,15 @@ def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
                                AND LOWER(n.tipo_novedad) LIKE '%permiso no rem%'
                               THEN CAST(n.dias AS REAL) ELSE 0 END), 0) AS dias_no_remunerados,
             COALESCE(SUM(CASE WHEN n.unidad = 'valor'
-                              THEN CAST(n.dias AS REAL) ELSE 0 END), 0) AS valor_otros_pagos
-        FROM novedades_nomina n
-        LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
-        WHERE n.es_valido = 1 AND n.cedula IS NOT NULL {extra_where}
-        GROUP BY n.cedula
-        ORDER BY MAX(n.area), MAX(n.nombre_empleado)
+                              THEN CAST(n.dias AS REAL) ELSE 0 END), 0) AS valor_otros_pagos,
+            COUNT(n.id) AS num_novedades
+        FROM salarios_empleados e
+        LEFT JOIN novedades_nomina n
+               ON n.cedula = e.cedula AND n.es_valido = 1{cond_join}
+        LEFT JOIN salarios_empleados s ON s.cedula = e.cedula
+        WHERE COALESCE(e.activo, 1) = 1 {area_where}{sede_where}
+        GROUP BY e.cedula, e.nombre, e.area, e.cargo, e.salario
+        ORDER BY COALESCE(e.area, ''), COALESCE(e.nombre, '')
     """)
     return [dict(r._mapping) for r in db.execute(sql, params).fetchall()]
 
