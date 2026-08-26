@@ -49,6 +49,12 @@ function storeSession({ expires_in, user } = {}) {
   scheduleTokenRefresh();
 }
 
+/** El login es la unica pagina que NO debe redirigirse a si misma en un 401:
+ *  hacerlo la recarga en bucle sin que el usuario llegue a escribir nada. */
+function isLoginPage() {
+  return /(^|[/])login[.]html$/.test(window.location.pathname);
+}
+
 function clearSession() {
   sessionStorage.removeItem('token_expires_at');
   sessionStorage.removeItem('user');
@@ -93,7 +99,9 @@ function refreshAccessToken() {
     })
     .catch((err) => {
       clearSession();
-      window.location.href = 'login.html';
+      if (!isLoginPage()) {
+        window.location.href = 'login.html';
+      }
       throw err;
     })
     .finally(() => { refreshInFlight = null; });
@@ -127,15 +135,22 @@ async function apiFetch(endpoint, options = {}) {
         headers,
         credentials: 'include',
       });
-    } catch {
-      return;
+    } catch (err) {
+      // Mismo motivo que abajo: no resolver como si hubiera ido bien.
+      throw err;
     }
   }
 
   if (res.status === 401) {
     clearSession();
-    window.location.href = 'login.html';
-    return;
+    // Devolver aqui (en vez de lanzar) resolvia la promesa con undefined, asi
+    // que los `.then()` lo trataban como exito. En login.html eso disparaba
+    // `location.href = 'dashboard.html'`, el dashboard volvia a dar 401 y
+    // rebotaba al login: bucle infinito de recargas.
+    if (!isLoginPage()) {
+      window.location.href = 'login.html';
+    }
+    throw new Error('Sesion expirada');
   }
 
   if (!res.ok) {
@@ -235,15 +250,22 @@ async function downloadFile(endpoint) {
     try {
       await refreshAccessToken();
       res = await fetch(`${API_BASE}${endpoint}`, { credentials: 'include' });
-    } catch {
-      return;
+    } catch (err) {
+      // Mismo motivo que abajo: no resolver como si hubiera ido bien.
+      throw err;
     }
   }
 
   if (res.status === 401) {
     clearSession();
-    window.location.href = 'login.html';
-    return;
+    // Devolver aqui (en vez de lanzar) resolvia la promesa con undefined, asi
+    // que los `.then()` lo trataban como exito. En login.html eso disparaba
+    // `location.href = 'dashboard.html'`, el dashboard volvia a dar 401 y
+    // rebotaba al login: bucle infinito de recargas.
+    if (!isLoginPage()) {
+      window.location.href = 'login.html';
+    }
+    throw new Error('Sesion expirada');
   }
 
   if (!res.ok) {
