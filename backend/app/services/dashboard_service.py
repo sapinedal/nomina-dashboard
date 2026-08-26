@@ -1054,7 +1054,7 @@ _CATEGORIA_EXPR = f"""
 """
 
 
-def get_export_rows(db: Session, filters: dict) -> list[dict]:
+def get_export_rows(db: Session, filters: dict, panel: Optional[str] = None) -> list[dict]:
     """Filas para el Excel, con la categoria y el valor YA calculados.
 
     No basta con volcar la tabla por dos motivos:
@@ -1070,6 +1070,15 @@ def get_export_rows(db: Session, filters: dict) -> list[dict]:
     que alimentan los paneles, para que el Excel cuadre con el tablero en vez
     de traer una segunda version de la verdad. La autorizacion por area entra
     por _panel_filters_sql, que aplica _area_sql_clause igual que el resto.
+
+    `panel` acota las filas al mismo universo que muestra ese panel:
+
+      'ausentismo'   -> unidad='dias'  y tipos de ausentismo
+      'horas-extras' -> unidad='horas' y tipos con factor legal
+
+    Se reutilizan los mismos predicados que usan get_panel_ausentismo y
+    get_panel_horas_extras. Escribirlos otra vez aqui haria que el Excel
+    trajera un conjunto de filas distinto al que se ve en pantalla.
     """
     extra_where, params = _panel_filters_sql(filters, full=True)
     # _panel_filters_sql NO aplica tipo_novedad pese a lo que dice su
@@ -1079,6 +1088,10 @@ def get_export_rows(db: Session, filters: dict) -> list[dict]:
     if filters.get("tipo_novedad"):
         extra_where += " AND LOWER(n.tipo_novedad) LIKE LOWER(:tipo_novedad_exp)"
         params["tipo_novedad_exp"] = f"%{filters['tipo_novedad']}%"
+    if panel == "ausentismo":
+        extra_where += f" AND n.unidad = 'dias' AND {_sql_aus_tipo_predicate('n')}"
+    elif panel == "horas-extras":
+        extra_where += f" AND n.unidad = 'horas' AND n.tipo_novedad IN {_HE_TIPOS_SQL}"
     sql = text(f"""
         SELECT
             n.cedula, n.nombre_empleado, n.area, n.sede, n.cargo,

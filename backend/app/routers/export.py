@@ -26,6 +26,11 @@ async def export_excel(
     area: Optional[List[str]] = Query(None, description="Área. Repetir para varias: ?area=NOMINA&area=SST"),
     tipo_novedad: Optional[str] = Query(None),
     periodo: Optional[str] = Query(None),
+    panel: Optional[str] = Query(
+        None,
+        description="Acota al universo de un panel: 'ausentismo' u 'horas-extras'. "
+                    "Sin valor, exporta todas las novedades.",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission(PERM_EXPORT_EXCEL)),
 ):
@@ -40,8 +45,16 @@ async def export_excel(
     }
     # Trae categoria y valor ya calculados con las mismas expresiones que
     # los paneles: el campo `valor` de la tabla se guarda nulo en la carga.
-    output = construir_libro_excel(svc.get_export_rows(db, filters))
-    filename = f"novedades_nomina_{periodo or 'todos'}.xlsx"
+    # Solo se aceptan los paneles conocidos: cualquier otro valor exporta todo
+    # en vez de devolver un libro vacio sin explicacion.
+    panel_norm = panel if panel in ("ausentismo", "horas-extras") else None
+    output = construir_libro_excel(
+        svc.get_export_rows(db, filters, panel=panel_norm), panel=panel_norm
+    )
+    base = {"ausentismo": "ausentismo", "horas-extras": "horas_extras_recargos"}.get(
+        panel_norm, "novedades_nomina"
+    )
+    filename = f"{base}_{periodo or 'todos'}.xlsx"
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

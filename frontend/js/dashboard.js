@@ -1187,7 +1187,12 @@ document.getElementById('btn-export-excel')?.addEventListener('click', async () 
     return;
   }
   try {
-    await API.downloadExcel(currentFilters);
+    // Desde Ausentismo o Horas extras, el Excel debe traer solo las filas de
+    // ese panel. Sin esto se exportaba todo el consolidado desde cualquiera.
+    const panelExportable = ['ausentismo', 'horas-extras'].includes(activePanel)
+      ? activePanel
+      : null;
+    await API.downloadExcel({ ...currentFilters, panel: panelExportable });
   } catch (e) {
     showToast('No se pudo exportar a Excel: ' + e.message, 'danger');
   }

@@ -87,6 +87,26 @@ class TestLibroExcelSegregado(unittest.TestCase):
         self.assertIn("Días", dias)
         self.assertNotIn("Horas", dias)
 
+    def test_export_de_un_panel_trae_una_sola_hoja(self):
+        """Desde Ausentismo u Horas extras el libro no debe traer las tres
+        hojas: las otras dos saldrian vacias o duplicando lo mismo."""
+        import openpyxl
+        solo_horas = [f for f in self.filas if f["unidad"] == "horas"]
+        solo_dias = [f for f in self.filas if f["unidad"] == "dias"]
+
+        wb = openpyxl.load_workbook(self.construir(solo_horas, panel="horas-extras"))
+        self.assertEqual(wb.sheetnames, ["Horas extras y recargos"])
+        self.assertNotIn("Días", [c.value for c in wb.active[1]])
+
+        wb = openpyxl.load_workbook(self.construir(solo_dias, panel="ausentismo"))
+        self.assertEqual(wb.sheetnames, ["Ausencias y días"])
+        self.assertNotIn("Horas", [c.value for c in wb.active[1]])
+
+    def test_sin_panel_sigue_trayendo_las_tres_hojas(self):
+        import openpyxl
+        wb = openpyxl.load_workbook(self.construir(self.filas, panel=None))
+        self.assertEqual(len(wb.sheetnames), 3)
+
     def test_el_valor_llega_a_la_hoja(self):
         """`valor` se guarda nulo en la carga; el importe lo calcula la consulta.
         Si el export volviera a leer la columna cruda, esto se caeria."""
