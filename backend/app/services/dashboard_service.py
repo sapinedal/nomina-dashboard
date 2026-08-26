@@ -1186,6 +1186,14 @@ def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
     El area se toma del roster, que es la fuente autorizada de RRHH; se recurre
     al area de la novedad solo si el roster no la trae. La autorizacion sigue
     en _area_sql_clause, ahora sobre el alias del roster.
+
+    Nombre, area y cargo tienen un tercer respaldo (`h`): la ULTIMA novedad
+    conocida del empleado, sin importar el periodo. Sin el, quien no tuvo
+    novedades en el mes salia con esas celdas vacias —el join `n` esta acotado
+    al periodo, asi que para el no devuelve nada—, aunque el dato estuviera en
+    sus novedades de otros meses. `h` va pre-agrupado por cedula a proposito:
+    unir el historial en crudo multiplicaria las filas y con ellas los SUM de
+    dias y valores.
     """
     area_where, params = _area_sql_clause(filters, alias="e", param_prefix="area_rep")
     cond_join = ""
@@ -1201,9 +1209,9 @@ def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
     sql = text(f"""
         SELECT
             e.cedula,
-            COALESCE(e.nombre, MAX(n.nombre_empleado)) AS nombre_empleado,
-            COALESCE(e.area,   MAX(n.area))            AS area,
-            COALESCE(e.cargo,  MAX(n.cargo))           AS cargo,
+            COALESCE(e.nombre, MAX(n.nombre_empleado), h.nombre_empleado) AS nombre_empleado,
+            COALESCE(e.area,   MAX(n.area),            h.area)            AS area,
+            COALESCE(e.cargo,  MAX(n.cargo),           h.cargo)           AS cargo,
             e.salario,
             COALESCE(SUM(CASE WHEN n.unidad = 'horas' AND n.tipo_novedad IN {_HE_TIPOS_SQL}
                               THEN {_HE_VALOR_EXPR} ELSE 0 END), 0) AS valor_extras,
@@ -1219,9 +1227,20 @@ def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
         LEFT JOIN novedades_nomina n
                ON n.cedula = e.cedula AND n.es_valido = 1{cond_join}
         LEFT JOIN salarios_empleados s ON s.cedula = e.cedula
+        LEFT JOIN (
+            SELECT cedula,
+                   MAX(nombre_empleado) AS nombre_empleado,
+                   MAX(area)            AS area,
+                   MAX(cargo)           AS cargo
+              FROM novedades_nomina
+             WHERE es_valido = 1 AND cedula IS NOT NULL
+             GROUP BY cedula
+        ) h ON h.cedula = e.cedula
         WHERE COALESCE(e.activo, 1) = 1 {area_where}{sede_where}
-        GROUP BY e.cedula, e.nombre, e.area, e.cargo, e.salario
-        ORDER BY COALESCE(e.area, ''), COALESCE(e.nombre, '')
+        GROUP BY e.cedula, e.nombre, e.area, e.cargo, e.salario,
+                 h.nombre_empleado, h.area, h.cargo
+        ORDER BY COALESCE(e.area,   MAX(n.area),            h.area,            ''),
+                 COALESCE(e.nombre, MAX(n.nombre_empleado), h.nombre_empleado, '')
     """)
     return [dict(r._mapping) for r in db.execute(sql, params).fetchall()]
 
