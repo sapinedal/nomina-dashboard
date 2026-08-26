@@ -1054,6 +1054,47 @@ _CATEGORIA_EXPR = f"""
 """
 
 
+def get_export_rows(db: Session, filters: dict) -> list[dict]:
+    """Filas para el Excel, con la categoria y el valor YA calculados.
+
+    No basta con volcar la tabla por dos motivos:
+
+    1. `dias` es una cantidad cuya unidad depende de `unidad`: son HORAS en
+       recargos y horas extras, y DIAS en incapacidades, vacaciones, licencias
+       y demas. Volcarla bajo un unico encabezado "Dias" mezcla magnitudes que
+       no se pueden sumar entre si.
+    2. `valor` se guarda SIEMPRE nulo en la carga (ver excel_processor y
+       trazalo_sync). El importe se deriva del salario en tiempo de consulta.
+
+    Se reutilizan _CATEGORIA_EXPR y _VALOR_CALC_EXPR, las mismas expresiones
+    que alimentan los paneles, para que el Excel cuadre con el tablero en vez
+    de traer una segunda version de la verdad. La autorizacion por area entra
+    por _panel_filters_sql, que aplica _area_sql_clause igual que el resto.
+    """
+    extra_where, params = _panel_filters_sql(filters, full=True)
+    # _panel_filters_sql NO aplica tipo_novedad pese a lo que dice su
+    # docstring. Se anade aqui, y no alli, para no cambiar en silencio lo que
+    # filtran los paneles que ya la usan. LOWER(...) LIKE en vez de ILIKE
+    # porque los tests corren sobre SQLite.
+    if filters.get("tipo_novedad"):
+        extra_where += " AND LOWER(n.tipo_novedad) LIKE LOWER(:tipo_novedad_exp)"
+        params["tipo_novedad_exp"] = f"%{filters['tipo_novedad']}%"
+    sql = text(f"""
+        SELECT
+            n.cedula, n.nombre_empleado, n.area, n.sede, n.cargo,
+            n.tipo_novedad, n.fecha_inicio, n.fecha_fin,
+            n.dias, n.unidad, n.periodo, n.estado,
+            n.archivo_origen, n.hoja_origen,
+            {_CATEGORIA_EXPR} AS categoria,
+            {_VALOR_CALC_EXPR} AS valor_calculado
+        FROM novedades_nomina n
+        LEFT JOIN salarios_empleados s ON n.cedula = s.cedula
+        WHERE n.es_valido = 1 {extra_where}
+        ORDER BY n.fecha_inicio DESC, n.cedula
+    """)
+    return [dict(r._mapping) for r in db.execute(sql, params).fetchall()]
+
+
 def get_panel_ausentismo(db: Session, filters: dict) -> dict:
     """Datos específicos del panel de ausentismo.
     Filtra por archivo_origen (no por el campo periodo): muchos registros del
