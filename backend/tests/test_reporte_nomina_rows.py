@@ -111,5 +111,55 @@ class TestReporteNominaIdentidad(unittest.TestCase):
         self.assertEqual(fila["salario"], 2000000)
 
 
+@unittest.skipUnless(HAS_SQLALCHEMY, "sqlalchemy no instalado (CI hermetico no lo requiere)")
+class TestExcluyeRazonesSociales(unittest.TestCase):
+    """AGUAS DEL PUERTO no puede salir ni en el Excel ni en Empleados del Período."""
+
+    def setUp(self):
+        self.engine = create_engine(f"sqlite:///{tempfile.mktemp(suffix='.db')}")
+        NovedadNomina.__table__.create(self.engine)
+        with self.engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE salarios_empleados (
+                    cedula VARCHAR(30) PRIMARY KEY, salario REAL,
+                    nombre VARCHAR(200), area VARCHAR(200),
+                    sede VARCHAR(200), cargo VARCHAR(200), activo INTEGER
+                )
+            """))
+            conn.execute(text(
+                "INSERT INTO salarios_empleados VALUES "
+                "('1', 3000000, 'ANA', 'NOMINA', 'PRINCIPAL', 'AUXILIAR', 1)"))
+            conn.execute(text(
+                "INSERT INTO salarios_empleados VALUES "
+                "('811012043', 1000, 'AGUAS DEL PUERTO SA E.S.P', NULL, NULL, NULL, 1)"))
+        self.db = sessionmaker(bind=self.engine)()
+        self.db.add(NovedadNomina(
+            archivo_origen="092026.xlsx", hoja_origen="TRAZALO",
+            cedula="1", nombre_empleado="ANA", area="NOMINA", cargo="AUXILIAR",
+            tipo_novedad="PRESENTE EN NOMINA", periodo="2026-09", es_valido=1,
+        ))
+        self.db.add(NovedadNomina(
+            archivo_origen="092026.xlsx", hoja_origen="TRAZALO",
+            cedula="811012043", nombre_empleado="AGUAS DEL PUERTO SA E.S.P",
+            tipo_novedad="PRESENTE EN NOMINA", periodo="2026-09", es_valido=1,
+        ))
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_reporte_omite_la_empresa(self):
+        filas = svc.get_reporte_nomina_rows(self.db, {"periodo": "2026-09"})
+        cedulas = [f["cedula"] for f in filas]
+        self.assertIn("1", cedulas)
+        self.assertNotIn("811012043", cedulas)
+
+    def test_lista_del_dashboard_omite_la_empresa(self):
+        lista = svc.get_empleados_lista(self.db, {"periodo": "2026-09"})
+        nombres = [e.nombre for e in lista.data]
+        self.assertIn("ANA", nombres)
+        self.assertNotIn("AGUAS DEL PUERTO SA E.S.P", nombres)
+
+
 if __name__ == "__main__":
     unittest.main()

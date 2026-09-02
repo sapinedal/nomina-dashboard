@@ -491,6 +491,14 @@ let _empleadosData = [];   // caché de la última carga
 let _empFiltroEstado = 'todos';
 let _empFiltroArea   = '';     // área seleccionada en el filtro inline
 
+// Mismo criterio que backend/app/utils/razon_social.py: Trazalo mezcla
+// empresas (S.A.S, E.S.P., LTDA) en users junto a los empleados.
+const _RAZON_SOCIAL_RE = /(?:^|[\s,;./])(?:S\.?\s*A\.?\s*S\.?|E\.?\s*S\.?\s*P\.?|S\.?\s*A\.?|LTDA\.?|LIMITADA|C[IÍ]A\.?)(?=$|[\s,;./])/i;
+function esRazonSocial(nombre) {
+  if (!nombre || !String(nombre).trim()) return false;
+  return _RAZON_SOCIAL_RE.test(String(nombre).toUpperCase().replace(/\s+/g, ' '));
+}
+
 async function loadEmpleadosLista() {
   if (!hasPermission('empleados_periodo')) return;
   const tbody = document.getElementById('emp-tbody');
@@ -499,7 +507,8 @@ async function loadEmpleadosLista() {
   try {
     const params = { ...currentFilters, tipo_novedad: null };
     const data = await API.getEmpleados(params);
-    _empleadosData   = data.data || [];
+    const crudos = data.data || [];
+    _empleadosData   = crudos.filter(r => !esRazonSocial(r.nombre));
     _empFiltroEstado = 'todos';
 
     // Poblar select de áreas con los valores únicos de la carga
@@ -513,15 +522,16 @@ async function loadEmpleadosLista() {
       _empFiltroArea   = _unicaAreaElegida();
     }
 
-    // Contadores en badges
-    setText('emp-cnt-activos',   data.activos);
-    setText('emp-cnt-inactivos', data.inactivos);
+    const activos   = _empleadosData.filter(r => r.estado === 'activo').length;
+    const inactivos = _empleadosData.length - activos;
+    setText('emp-cnt-activos',   activos);
+    setText('emp-cnt-inactivos', inactivos);
 
     _renderEmpleadosTabla(_empleadosData);
     _setEmpBadgeSelected('todos');
 
     const footer = document.getElementById('emp-footer');
-    if (footer) footer.textContent = `${data.total} empleados en el período — ${data.activos} activos, ${data.inactivos} inactivos`;
+    if (footer) footer.textContent = `${_empleadosData.length} empleados en el período — ${activos} activos, ${inactivos} inactivos`;
   } catch (e) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#ef4444;padding:20px">Error cargando empleados</td></tr>';
     console.error('Error empleados:', e);
@@ -1245,6 +1255,42 @@ document.getElementById('btn-run-etl')?.addEventListener('click', async () => {
 });
 
 // ── Sincronizacion manual con Trazalo (solo admin) ──
+
+// El sync recorre todo el roster por cada periodo, asi que corre en segundo
+// plano en el backend y aqui se sondea el resultado. Antes se esperaba la
+// respuesta del propio POST y el navegador terminaba cortando la conexion:
+// el usuario solo veia "Failed to fetch", sin saber si el sync habia
+// terminado bien.
+const TRAZALO_POLL_INTERVAL_MS = 3000;
+const TRAZALO_POLL_TIMEOUT_MS = 15 * 60 * 1000;
+// Mientras el sync escribe miles de filas el backend puede tardar en
+// responder; un sondeo fallido suelto no significa que la sincronizacion haya
+// fracasado, asi que solo se abandona tras varios seguidos.
+const TRAZALO_POLL_MAX_FALLOS = 5;
+
+const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function esperarSyncTrazalo() {
+  const limite = Date.now() + TRAZALO_POLL_TIMEOUT_MS;
+  let fallosSeguidos = 0;
+  while (Date.now() < limite) {
+    await esperar(TRAZALO_POLL_INTERVAL_MS);
+    let estado;
+    try {
+      estado = await API.getTrazaloStatus();
+      fallosSeguidos = 0;
+    } catch (e) {
+      if (++fallosSeguidos >= TRAZALO_POLL_MAX_FALLOS) throw e;
+      continue;
+    }
+    if (estado && estado.status !== 'running') return estado;
+  }
+  throw new Error(
+    'la sincronizacion sigue en curso tras 15 minutos. Los datos pueden estar ' +
+    'actualizandose todavia: revise los logs del backend antes de reintentar.',
+  );
+}
+
 document.getElementById('btn-sync-trazalo')?.addEventListener('click', async () => {
   if (!confirm('¿Sincronizar novedades desde Trazalo ahora?')) return;
   const btn = document.getElementById('btn-sync-trazalo');
@@ -1252,17 +1298,33 @@ document.getElementById('btn-sync-trazalo')?.addEventListener('click', async () 
   btn.disabled = true;
   btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Sincronizando...';
   try {
-    const r = await API.triggerTrazalo();
-    if (r && r.status === 'ok') {
+    const inicio = await API.triggerTrazalo();
+    if (inicio && inicio.started === false) {
+      showToast('Ya hay una sincronizacion en curso; esperando a que termine...', 'info');
+    }
+
+    const estado = await esperarSyncTrazalo();
+    const r = estado.result || {};
+    if (estado.status === 'ok') {
       showToast(`Trazalo sincronizado: ${r.periodos_sincronizados} periodos, ${r.registros_insertados} registros.`, 'success');
       setTimeout(() => loadPanel(activePanel), 1500);
-    } else if (r && r.status === 'skipped') {
-      showToast('Sincronizacion omitida: Trazalo no esta configurado (TRAZALO_DB_HOST).', 'warning');
+    } else if (estado.status === 'skipped') {
+      showToast(
+        'Sincronizacion omitida: ' + (r.reason || 'Trazalo no esta configurado (TRAZALO_DB_HOST).'),
+        'warning',
+      );
+    } else if (estado.status === 'idle') {
+      // El backend se reinicio a mitad del sync: el estado en memoria se
+      // perdio y no hay forma de saber si alcanzo a terminar.
+      showToast(
+        'El servicio se reinicio durante la sincronizacion. Revise los logs del backend y reintente.',
+        'danger',
+      );
     } else {
-      showToast('Error en la sincronizacion: ' + ((r && r.error) || 'desconocido'), 'danger');
+      showToast('Error en la sincronizacion: ' + (estado.error || 'desconocido'), 'danger');
     }
   } catch (e) {
-    showToast('Error al sincronizar Trazalo: ' + e.message, 'danger');
+    showToast('Error al sincronizar Trazalo: ' + describeError(e), 'danger');
   } finally {
     btn.disabled = false;
     btn.innerHTML = original;
