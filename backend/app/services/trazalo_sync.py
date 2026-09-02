@@ -32,6 +32,7 @@ from app.config import settings
 from app.models.nomina import NovedadNomina
 from app.services.excel_processor import normalize_sede
 from app.utils.logger import get_logger
+from app.utils.razon_social import es_razon_social
 
 logger = get_logger(__name__)
 
@@ -115,13 +116,114 @@ def _sede_canon(raw: Optional[str]) -> Optional[str]:
 
 
 
+def _desactivar_empresas(db, extra_cedulas) -> int:
+    """Pone activo=0 a razones sociales ya mezcladas en el roster local.
+
+    Toma las cédulas/NIT que Trazalo acaba de mandar como empresa (aunque el
+    nombre local esté vacío) y, además, barre filas cuyo `nombre` ya sea
+    razón social por un sync anterior.
+    """
+    from sqlalchemy import text
+
+    cedulas = {c for c in extra_cedulas if c}
+    for row in db.execute(text(
+        "SELECT cedula, nombre FROM salarios_empleados WHERE nombre IS NOT NULL"
+    )).fetchall():
+        mapping = row._mapping
+        if es_razon_social(mapping["nombre"]):
+            cedulas.add(mapping["cedula"])
+    if not cedulas:
+        return 0
+    sql = text(
+        "UPDATE salarios_empleados SET activo = 0 "
+        "WHERE cedula = :cedula AND COALESCE(activo, 1) <> 0"
+    )
+    for cedula in cedulas:
+        db.execute(sql, {"cedula": cedula})
+    return len(cedulas)
+
+
+def invalidar_novedades_empresas(db, extra_cedulas=()) -> int:
+    """Saca de la prenómina las novedades de razones sociales.
+
+    El dashboard de empleados lee `novedades_nomina`, no el roster. Dejar
+    `activo=0` en salarios_empleados no basta: un PRESENTE EN NOMINA viejo
+    (o una fila de Excel) sigue mostrando a AGUAS DEL PUERTO como empleado.
+    """
+    from sqlalchemy import text
+
+    cedulas = {c for c in extra_cedulas if c}
+    for row in db.execute(text(
+        "SELECT DISTINCT cedula, nombre_empleado AS nombre "
+        "FROM novedades_nomina "
+        "WHERE es_valido = 1 AND cedula IS NOT NULL AND nombre_empleado IS NOT NULL"
+    )).fetchall():
+        mapping = row._mapping
+        if es_razon_social(mapping["nombre"]):
+            cedulas.add(mapping["cedula"])
+    if not cedulas:
+        return 0
+    sql = text(
+        "UPDATE novedades_nomina "
+        "SET es_valido = 0, razon_invalido = :razon "
+        "WHERE cedula = :cedula AND es_valido = 1"
+    )
+    filas = 0
+    razon = "Razón social, no es empleado"
+    for cedula in cedulas:
+        result = db.execute(sql, {"cedula": cedula, "razon": razon})
+        filas += result.rowcount or 0
+    db.commit()
+    logger.info("trazalo_novedades_empresas_invalidadas",
+                cedulas=len(cedulas), filas=filas)
+    return filas
+
+
+def purgar_razones_sociales(db=None, extra_cedulas=()) -> dict:
+    """Limpia empresas ya mezcladas en roster y novedades. Idempotente.
+
+    El dashboard lista gente desde `novedades_nomina`, no desde el roster.
+    Sin este barrido, un PRESENTE EN NOMINA viejo sigue mostrando a
+    AGUAS DEL PUERTO como empleado aunque el sync ya no las inserte.
+    Se llama al arrancar la app (redeploy) y al terminar cada sync.
+    """
+    from app.database import SessionLocal
+
+    close = False
+    if db is None:
+        db = SessionLocal()
+        close = True
+    try:
+        n_roster = _desactivar_empresas(db, extra_cedulas)
+        if n_roster:
+            db.commit()
+        n_nov = invalidar_novedades_empresas(db, extra_cedulas)
+        logger.info("trazalo_razones_sociales_purgadas",
+                    roster=n_roster, novedades=n_nov)
+        return {"roster_desactivadas": n_roster, "novedades_invalidadas": n_nov}
+    except Exception as e:
+        logger.error("trazalo_purge_error", error=str(e))
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {"error": str(e)}
+    finally:
+        if close:
+            db.close()
+
+
 def sincronizar_roster(db, roster: list) -> dict:
     """Vuelca el roster de Trazalo en `salarios_empleados`.
 
-    Se guarda el roster completo y no solo el salario: el reporte de nomina
+    Se guarda el roster de EMPLEADOS y no solo el salario: el reporte de nomina
     necesita saber que empleados existen en cada area aunque no tengan ninguna
     novedad en el periodo. `activo` viene del WHERE de la consulta del roster
-    (u.activo = true), asi que todo lo que llega aqui esta activo.
+    (u.activo = true), asi que todo lo que llega aqui esta activo en Trazalo.
+
+    Las razones sociales (S.A.S, E.S.P., LTDA, etc.) se omiten: Trazalo las
+    mezcla en `users` junto al personal, y no deben liquidarse ni aparecer en
+    prenomina. Si ya estaban en la tabla local, se desactivan.
 
     **La identidad se sincroniza tenga o no salario.** Antes toda la fila se
     descartaba con `if salario is not None`, y eso dejaba en el reporte filas
@@ -143,9 +245,13 @@ def sincronizar_roster(db, roster: list) -> dict:
     from sqlalchemy import text
 
     con_salario, sin_salario = [], []
+    empresas_cedulas = []
     for u in roster:
         cedula = _clean_cedula(u["cedula"])
         if not cedula:
+            continue
+        if es_razon_social(u.get("nombre")):
+            empresas_cedulas.append(cedula)
             continue
         # _area_upper es la MISMA normalizacion que se aplica al area de cada
         # novedad. Sin ella el area del roster no casaria con las areas
@@ -194,11 +300,22 @@ def sincronizar_roster(db, roster: list) -> dict:
         for item in sin_salario:
             db.execute(sql_identidad, item)
 
-    if con_salario or sin_salario:
+    empresas_desactivadas = _desactivar_empresas(db, empresas_cedulas)
+
+    if con_salario or sin_salario or empresas_desactivadas or empresas_cedulas:
         db.commit()
-        logger.info("trazalo_roster_sincronizado",
-                    con_salario=len(con_salario), sin_salario=len(sin_salario))
-    return {"con_salario": len(con_salario), "sin_salario": len(sin_salario)}
+        logger.info(
+            "trazalo_roster_sincronizado",
+            con_salario=len(con_salario),
+            sin_salario=len(sin_salario),
+            empresas_omitidas=len(empresas_cedulas),
+            empresas_desactivadas=empresas_desactivadas,
+        )
+    return {
+        "con_salario": len(con_salario),
+        "sin_salario": len(sin_salario),
+        "empresas_omitidas": len(empresas_cedulas),
+    }
 
 
 
@@ -316,6 +433,10 @@ def sync_trazalo(db: Session) -> dict:
 
     # Sincronizar el roster en la tabla local salarios_empleados
     sincronizar_roster(db, roster)
+    empresas_cedulas = [
+        _clean_cedula(u["cedula"]) for u in roster
+        if es_razon_social(u.get("nombre"))
+    ]
 
     por_periodo: dict[str, list] = defaultdict(list)
     for f in filas:
@@ -372,7 +493,7 @@ def sync_trazalo(db: Session) -> dict:
         cedulas_con_novedad = set()
         for f in registros:
             cedula = _clean_cedula(f["cedula"])
-            if not cedula:
+            if not cedula or es_razon_social(f.get("nombre")):
                 continue
             cedulas_con_novedad.add(cedula)
             unidad, dias = _unidad_y_dias(
@@ -405,7 +526,7 @@ def sync_trazalo(db: Session) -> dict:
 
         for u in roster:
             cedula = _clean_cedula(u["cedula"])
-            if not cedula or cedula in cedulas_con_novedad:
+            if not cedula or cedula in cedulas_con_novedad or es_razon_social(u.get("nombre")):
                 continue
             nuevos.append({
                 "cedula": cedula,
@@ -443,6 +564,8 @@ def sync_trazalo(db: Session) -> dict:
             modo="reemplazo" if modo_reemplazo else "combinar",
             insertados=len(nuevos), invalidados_excel=invalidados,
         )
+
+    purgar_razones_sociales(db, empresas_cedulas)
 
     logger.info(
         "trazalo_sync_completado", periodos=total_periodos,

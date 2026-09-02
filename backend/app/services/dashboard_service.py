@@ -13,6 +13,7 @@ from app.schemas.dashboard import (
     KPIResponse, ChartResponse, SerieData, PaginatedTable,
     AlertItem, AlertsResponse,
 )
+from app.utils.razon_social import es_razon_social, sql_es_razon_social, sql_not_razon_social
 
 _MESES_ES = {
     'ENERO': '01', 'FEBRERO': '02', 'MARZO': '03', 'ABRIL': '04',
@@ -1255,12 +1256,16 @@ def get_reporte_nomina_rows(db: Session, filters: dict) -> list[dict]:
              GROUP BY cedula
         ) h ON h.cedula = e.cedula
         WHERE COALESCE(e.activo, 1) = 1 {area_where}{sede_where}
+          {sql_not_razon_social("COALESCE(e.nombre, h.nombre_empleado)")}
         GROUP BY e.cedula, e.nombre, e.area, e.cargo, e.salario,
                  h.nombre_empleado, h.area, h.cargo
         ORDER BY COALESCE(e.area,   MAX(n.area),            h.area,            ''),
                  COALESCE(e.nombre, MAX(n.nombre_empleado), h.nombre_empleado, '')
     """)
-    return [dict(r._mapping) for r in db.execute(sql, params).fetchall()]
+    return [
+        dict(r._mapping) for r in db.execute(sql, params).fetchall()
+        if not es_razon_social(r._mapping.get("nombre_empleado"))
+    ]
 
 
 def get_panel_ausentismo(db: Session, filters: dict) -> dict:
@@ -2010,11 +2015,18 @@ def get_empleados_lista(db: Session, filters: dict, estado_filter: str = "todos"
         FROM novedades_nomina n
         WHERE n.es_valido = 1 AND n.cedula IS NOT NULL
           {arch_where} {sede_where} {tipo_where}
+          AND NOT EXISTS (
+              SELECT 1 FROM novedades_nomina nx
+              WHERE nx.cedula = n.cedula AND nx.es_valido = 1
+                AND nx.nombre_empleado IS NOT NULL
+                AND {sql_es_razon_social("nx.nombre_empleado")}
+          )
         GROUP BY n.cedula
         {area_having}
         ORDER BY estado ASC, nombre ASC
     """)
     rows = db.execute(sql, params).fetchall()
+    rows = [r for r in rows if not es_razon_social(r.nombre)]
 
     per_por_cedula = _max_periodo_por_cedula(db, max_per)
 

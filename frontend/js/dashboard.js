@@ -495,6 +495,14 @@ let _empleadosData = [];   // caché de la última carga
 let _empFiltroEstado = 'todos';
 let _empFiltroArea   = '';     // área seleccionada en el filtro inline
 
+// Mismo criterio que backend/app/utils/razon_social.py: Trazalo mezcla
+// empresas (S.A.S, E.S.P., LTDA) en users junto a los empleados.
+const _RAZON_SOCIAL_RE = /(?:^|[\s,;./])(?:S\.?\s*A\.?\s*S\.?|E\.?\s*S\.?\s*P\.?|S\.?\s*A\.?|LTDA\.?|LIMITADA|C[IÍ]A\.?)(?=$|[\s,;./])/i;
+function esRazonSocial(nombre) {
+  if (!nombre || !String(nombre).trim()) return false;
+  return _RAZON_SOCIAL_RE.test(String(nombre).toUpperCase().replace(/\s+/g, ' '));
+}
+
 async function loadEmpleadosLista() {
   if (!hasPermission('empleados_periodo')) return;
   const tbody = document.getElementById('emp-tbody');
@@ -503,7 +511,8 @@ async function loadEmpleadosLista() {
   try {
     const params = { ...currentFilters, tipo_novedad: null };
     const data = await API.getEmpleados(params);
-    _empleadosData   = data.data || [];
+    const crudos = data.data || [];
+    _empleadosData   = crudos.filter(r => !esRazonSocial(r.nombre));
     _empFiltroEstado = 'todos';
 
     // Poblar select de áreas con los valores únicos de la carga
@@ -517,15 +526,16 @@ async function loadEmpleadosLista() {
       _empFiltroArea   = _unicaAreaElegida();
     }
 
-    // Contadores en badges
-    setText('emp-cnt-activos',   data.activos);
-    setText('emp-cnt-inactivos', data.inactivos);
+    const activos   = _empleadosData.filter(r => r.estado === 'activo').length;
+    const inactivos = _empleadosData.length - activos;
+    setText('emp-cnt-activos',   activos);
+    setText('emp-cnt-inactivos', inactivos);
 
     _renderEmpleadosTabla(_empleadosData);
     _setEmpBadgeSelected('todos');
 
     const footer = document.getElementById('emp-footer');
-    if (footer) footer.textContent = `${data.total} empleados en el período — ${data.activos} activos, ${data.inactivos} inactivos`;
+    if (footer) footer.textContent = `${_empleadosData.length} empleados en el período — ${activos} activos, ${inactivos} inactivos`;
   } catch (e) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#ef4444;padding:20px">Error cargando empleados</td></tr>';
     console.error('Error empleados:', e);
