@@ -229,3 +229,61 @@ def construir_libro_nomina(filas: List[dict], periodo: Optional[str] = None,
     workbook.close()
     output.seek(0)
     return output
+
+
+def construir_libro_sin_salario(filas: List[dict]) -> io.BytesIO:
+    """Listado de empleados activos a los que les falta el salario en Trazalo.
+
+    No lleva ninguna columna de dinero, y no es un descuido: el reporte existe
+    para que RRHH sepa a quien cargarle el salario, no para exponer cuanto gana
+    nadie. Las filas llegan ya filtradas por las areas autorizadas del usuario.
+    """
+    import xlsxwriter
+    from datetime import datetime as _datetime
+
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    ws = workbook.add_worksheet("Sin salario")
+
+    header_fmt = workbook.add_format({
+        "bold": True, "bg_color": "#2C4770", "font_color": "white",
+        "border": 1, "align": "center", "valign": "vcenter", "text_wrap": True,
+    })
+    aviso_fmt = workbook.add_format({"italic": True, "font_color": "#8A6D3B", "text_wrap": True})
+    tot_lbl = workbook.add_format({"bold": True, "top": 1})
+
+    # Quien abra el archivo tiene que entender que consecuencia tiene el hueco,
+    # o el listado parece una curiosidad y no una tarea pendiente.
+    aviso = ("Empleados ACTIVOS en Trazalo sin salario registrado. Mientras les falte, "
+             "quedan excluidos de todo calculo de dinero del dashboard (valor de "
+             "incapacidades, horas extras y prenomina): no se liquidan con un salario "
+             "supuesto. Cargar el salario en el sistema de origen corrige el hueco en "
+             "la siguiente sincronizacion.")
+    ws.merge_range(0, 0, 0, 4, aviso, aviso_fmt)
+    ws.set_row(0, 42)
+    ws.write(1, 0, f"Generado: {_datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+    FILA_CAB = 3
+    columnas = [("Cédula", "cedula"), ("Nombre Empleado", "nombre"),
+                ("Área", "area"), ("Cargo", "cargo"), ("Sede", "sede")]
+    for c, (titulo, _) in enumerate(columnas):
+        ws.write(FILA_CAB, c, titulo, header_fmt)
+        ws.set_column(c, c, 32 if c in (1, 2, 3) else 18)
+    ws.freeze_panes(FILA_CAB + 1, 0)
+    if filas:
+        ws.autofilter(FILA_CAB, 0, FILA_CAB + len(filas), len(columnas) - 1)
+
+    for i, fila in enumerate(filas):
+        for c, (_, clave) in enumerate(columnas):
+            valor = fila.get(clave)
+            # La cedula va como texto: es un identificador, no una cantidad, y
+            # como numero pierde los ceros a la izquierda.
+            ws.write_string(FILA_CAB + 1 + i, c, "" if valor is None else str(valor))
+
+    fila_total = FILA_CAB + 1 + len(filas)
+    ws.write(fila_total, 0, "TOTAL", tot_lbl)
+    ws.write_number(fila_total, 1, len(filas), tot_lbl)
+
+    workbook.close()
+    output.seek(0)
+    return output
